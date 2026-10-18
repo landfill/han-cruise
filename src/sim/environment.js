@@ -4,10 +4,10 @@ import { sunPosition, moonPosition, seoulDate } from './sun.js';
 import { smoothstep } from '../gpu/math.js';
 
 export const PRESETS = {
-  day: { label: '낮', date: [2026, 10, 18, 13, 10], haze: 2.2, clouds: 0.16, veil: 0.16, wind: 3.2, key: 0.15, exMax: 20 },
-  golden: { label: '골든아워', date: [2026, 10, 18, 17, 18], haze: 3.0, clouds: 0.12, veil: 0.25, wind: 2.8, key: 0.13, exMax: 40 },
+  day: { label: '낮', date: [2026, 10, 18, 13, 10], haze: 2.2, clouds: 0.07, veil: 0.16, wind: 3.2, key: 0.15, exMax: 20 },
+  golden: { label: '골든아워', date: [2026, 10, 18, 17, 18], haze: 3.0, clouds: 0.05, veil: 0.25, wind: 2.8, key: 0.13, exMax: 40 },
   // night: a camera keeps the scene dark and lets lit windows and lamps carry the image
-  night: { label: '야간', date: [2026, 10, 18, 19, 40], haze: 3.4, clouds: 0.05, veil: 0.30, wind: 2.4, key: 0.035, exMax: 160 },
+  night: { label: '야간', date: [2026, 10, 18, 19, 40], haze: 3.4, clouds: 0.03, veil: 0.30, wind: 2.4, key: 0.035, exMax: 160 },
 };
 
 // The river flows west-north-west past Yeouido (towards the Yellow Sea).
