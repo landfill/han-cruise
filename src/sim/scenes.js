@@ -4,7 +4,8 @@
 export const SCENES = {
   golden_sun: { tod: 'golden', s: 3330, view: 'bow', yawToAz: 252, pitch: -3, time: 40, desc: '골든아워, 태양 방향 수면 (여의도 방향 역광)' },
   golden_city: { tod: 'golden', s: 980, view: 'bow', pitch: -1, time: 40, desc: '골든아워, 태양을 등진 수면과 도시 (한강철교·용산 방면)' },
-  golden_side: { tod: 'golden', s: 1250, view: 'port', yaw: -70, pitch: -2, time: 40, desc: '골든아워, 태양을 옆에 둔 수면과 여의도·63빌딩' },
+  golden_side: { tod: 'golden', s: 1250, view: 'port', yaw: -70, pitch: -2, time: 40, desc: '골든아워, 서쪽 측광을 받는 이촌동 아파트와 수면' },
+  golden_63: { tod: 'golden', s: 2900, view: 'port', lookAt: [-419, 569], pitch: 3, time: 40, desc: '골든아워, 63빌딩과 여의도 동단' },
   bridge_approach: { tod: 'golden', s: 600, view: 'bow', pitch: 4, time: 40, desc: '원효대교 접근' },
   bridge_under: { tod: 'golden', s: 728, view: 'bow', pitch: 30, time: 40, desc: '원효대교 아래 통과' },
   rail_approach: { tod: 'day', s: 1640, view: 'bow', pitch: 3, time: 40, desc: '한강철교 접근 (낮)' },
@@ -15,6 +16,7 @@ export const SCENES = {
   day_overview: { tod: 'day', s: 900, view: 'port', yaw: -50, pitch: 0, time: 40, desc: '낮, 원효대교 이후 여의도 방향' },
 
   day_bridge: { tod: 'day', s: 560, view: 'bow', pitch: 6, time: 40, desc: '낮, 원효대교 접근 (교량 위 차량)' },
+  depart_bank: { tod: 'golden', s: 150, view: 'stern', yaw: 155, pitch: -4, time: 40, paused: true, desc: '출항 직전, 여의도 강변 근경' },
   debug_top: { tod: 'golden', s: 980, free: { pos: [-200, 350, 900], yaw: 20, pitch: -25 }, time: 40, desc: 'debug overview' },
   debug_boat: { tod: 'golden', s: 980, freeRel: { pos: [-45, 18, -40], yaw: 135, pitch: -14 }, time: 40, desc: 'debug boat' },
 };

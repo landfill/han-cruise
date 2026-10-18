@@ -348,3 +348,68 @@ export function buildBridges(bridges) {
 }
 
 export { cross, norm };
+
+// Elevated roads along the banks (viaducts, interchange ramps): deck slab on a shallow girder,
+// parapets, single or twin columns every ~30 m, street lamps. pts: [x, deckY, z, groundY].
+export function buildViaducts(viaducts) {
+  const mb = new MeshBuilder(1 << 15);
+  const lights = [];
+  const lanes = [];
+  for (const v of viaducts) {
+    const P = v.pts;
+    if (P.length < 2) continue;
+    const half = v.width / 2;
+    // per-vertex miter normals (right of the direction of travel)
+    const nrm = P.map((_, i) => {
+      const a = P[Math.max(0, i - 1)], b = P[Math.min(P.length - 1, i + 1)];
+      const dx = b[0] - a[0], dz = b[2] - a[2], l = Math.hypot(dx, dz) || 1;
+      return [-dz / l, dx / l];
+    });
+    const at = (i, off, dy) => [P[i][0] + nrm[i][0] * off, P[i][1] + dy, P[i][2] + nrm[i][1] * off];
+    const strip = (prof) => {
+      for (let i = 0; i < P.length - 1; i++) {
+        for (let k = 0; k < prof.length - 1; k++) {
+          const [o0, y0] = prof[k], [o1, y1] = prof[k + 1];
+          mb.quad(at(i, o0, y0), at(i + 1, o0, y0), at(i + 1, o1, y1), at(i, o1, y1));
+        }
+      }
+    };
+    mb.material(MAT.ASPHALT, [0.08, 0.08, 0.085], 0.8);
+    strip([[-half, 0], [half, 0]]);
+    mb.material(MAT.CONCRETE, [0.55, 0.54, 0.51], 0.85);
+    strip([[half, 0], [half, -0.35], [half * 0.55, -1.4], [-half * 0.55, -1.4], [-half, -0.35], [-half, 0]]);
+    strip([[-half, 0], [-half, 1.0], [-half + 0.35, 1.0], [-half + 0.35, 0]]);
+    strip([[half - 0.35, 0], [half - 0.35, 1.0], [half, 1.0], [half, 0]]);
+    // columns and lamps along the length
+    let acc = 0;
+    for (let i = 0; i < P.length - 1; i++) {
+      const L = Math.hypot(P[i + 1][0] - P[i][0], P[i + 1][2] - P[i][2]);
+      for (let s = (30 - acc) % 30; s < L; s += 30) {
+        const t = s / L;
+        const x = P[i][0] + (P[i + 1][0] - P[i][0]) * t, z = P[i][2] + (P[i + 1][2] - P[i][2]) * t;
+        const y = P[i][1] + (P[i + 1][1] - P[i][1]) * t, g = P[i][3] + (P[i + 1][3] - P[i][3]) * t;
+        const n = nrm[i];
+        if (y - 1.4 - g > 1.5) {
+          mb.material(MAT.CONCRETE, [0.5, 0.49, 0.46], 0.9);
+          const cols = v.width > 14 ? [-half * 0.4, half * 0.4] : [0];
+          for (const off of cols) mb.tube([x + n[0] * off, g - 0.5, z + n[1] * off], [x + n[0] * off, y - 1.3, z + n[1] * off], 0.9, 8);
+        }
+        // lamp on the right parapet
+        const lx = x + n[0] * (half - 0.2), lz = z + n[1] * (half - 0.2);
+        mb.material(MAT.STEEL, [0.45, 0.46, 0.47], 0.5, 0.6);
+        mb.tube([lx, y + 1, lz], [lx, y + 10, lz], 0.1, 5);
+        lights.push(lx - n[0] * 1.8, y + 9.8, lz - n[1] * 1.8, 0.33, 1.0, 0.8, 0.55, -10);
+      }
+      acc = (acc + L) % 30;
+    }
+    // traffic: lanes 3.4 m apart, keep right
+    const nl = Math.max(1, Math.floor(v.width / 3.6));
+    for (let k = 0; k < nl; k++) {
+      const off = (k - (nl - 1) / 2) * 3.4;
+      const pts = P.map((_, i) => at(i, off, 0.05));
+      if (v.oneway) lanes.push({ pts, speed: 18 });
+      else lanes.push({ pts: off > 0 ? pts : pts.slice().reverse(), speed: 16 });
+    }
+  }
+  return { mesh: mb.result(), lights: new Float32Array(lights), lanes };
+}

@@ -4,10 +4,10 @@ import { sunPosition, moonPosition, seoulDate } from './sun.js';
 import { smoothstep } from '../gpu/math.js';
 
 export const PRESETS = {
-  day: { label: '낮', date: [2026, 10, 18, 13, 10], haze: 2.2, clouds: 0.16, veil: 0.10, wind: 3.2, key: 0.15, exMax: 20 },
-  golden: { label: '골든아워', date: [2026, 10, 18, 17, 18], haze: 3.0, clouds: 0.12, veil: 0.24, wind: 2.8, key: 0.13, exMax: 40 },
+  day: { label: '낮', date: [2026, 10, 18, 13, 10], haze: 2.2, clouds: 0.0, veil: 0.16, wind: 3.2, key: 0.15, exMax: 20 },
+  golden: { label: '골든아워', date: [2026, 10, 18, 17, 18], haze: 3.0, clouds: 0.0, veil: 0.40, wind: 2.8, key: 0.13, exMax: 40 },
   // night: a camera keeps the scene dark and lets lit windows and lamps carry the image
-  night: { label: '야간', date: [2026, 10, 18, 19, 40], haze: 3.4, clouds: 0.08, veil: 0.22, wind: 2.4, key: 0.035, exMax: 160 },
+  night: { label: '야간', date: [2026, 10, 18, 19, 40], haze: 3.4, clouds: 0.0, veil: 0.30, wind: 2.4, key: 0.035, exMax: 160 },
 };
 
 // The river flows west-north-west past Yeouido (towards the Yellow Sea).
@@ -40,7 +40,7 @@ export function makeEnv(presetKey, overrides = {}) {
     shadows: e > -1,
     ambient: 1.0,
     exposure: 1.0, exposureKey: p.key, exposureMin: 0.02, exposureMax: p.exMax,
-    bloom: 0.045, saturation: 1.0, contrast: 1.0,
+    bloom: 0.018, saturation: 1.0, contrast: 1.0,
     debug: 0,
     boat: { x: 0, z: 0, heading: 0, v: 0, yawRate: 0 },
   };

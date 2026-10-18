@@ -380,6 +380,9 @@ fn cloudLayers(dir: vec3f, pixAng: f32, aa: vec2f, sunT: ptr<function, f32>) -> 
         let s1 = highDensity(h.q + sxz * 0.15, fp, 4) * far;
         let s2 = highDensity(h.q + sxz * 0.5, fp, 3) * far;
         hi = shadeLayer(dir, h, hc, d, s1, s2, s2, F.atmo.w, 0.80);
+        // drop the faint fringe of the deck: under strong forward scattering near a low sun it
+        // otherwise shows as concentric contour bands across the clear sky
+        hi *= smoothstep(0.02, 0.12, d);
         let aw = select(fp * 0.2 * 2.5, aa.y, aa.y >= 0.0);
         hi *= smoothstep(0.0, aw * 1.5 + 1e-6, e);
         hiVis = exp(-h.t * 0.010 * (0.6 + 0.4 * F.atmo.x));

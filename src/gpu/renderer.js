@@ -417,7 +417,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   const meshes = []; // { first, count, base, min, max, kind }
   let tris = 0;
   {
-    const parts = [...geom.buildings.meshes.map((m) => [m, 'building']), [geom.bridges.mesh, 'bridge'], [geom.landmarks.mesh, 'landmark']];
+    const parts = [...geom.buildings.meshes.map((m) => [m, 'building']), [geom.bridges.mesh, 'bridge'], [geom.viaducts.mesh, 'bridge'], [geom.landmarks.mesh, 'landmark']];
     if (geom.misc) parts.push([geom.misc, 'misc']);
     let vbytes = 0, icount = 0;
     for (const [m] of parts) { vbytes += m.vertices.byteLength; icount += m.icount; }
@@ -478,6 +478,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   for (let i = 0; i < lampData.length; i += 3) staticLights.push(lampData[i], lampData[i + 1], lampData[i + 2], 0.3, 1.0, 0.78, 0.5, -10);
   const pushArr = (arr) => { for (let i = 0; i < arr.length; i++) staticLights.push(arr[i]); };
   pushArr(geom.bridges.lights);
+  pushArr(geom.viaducts.lights);
   pushArr(geom.landmarks.lights);
   const av = geom.buildings.lights;
   for (let i = 0; i < av.length; i += 3) staticLights.push(av[i], av[i + 1], av[i + 2], 0.25, 1.0, 0.06, 0.03, -10);
@@ -748,7 +749,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     device.queue.writeBuffer(reflUBO, 0, g);
     // the half-res sky pass sees the same camera with half the pixels
     skyF.set(f);
-    set4(skyF, 'screen', W >> 1, H >> 1, 2 / W, 2 / H);
+    // keep the full-resolution pixel footprint: the cloud octaves must not fade earlier at half res
+    set4(skyF, 'screen', W >> 1, H >> 1, 1 / W, 1 / H);
     device.queue.writeBuffer(skyUBO, 0, skyF);
     // shadow pass uniforms (camera-relative)
     for (let c = 0; c < 3; c++) {

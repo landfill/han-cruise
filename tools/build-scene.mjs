@@ -571,6 +571,14 @@ for (const f of ['buildings_wide', 'buildings_corridor', 'landmarks']) {
       else h = 6.5 + (seed % 3) * 3.0;
       void cx; void cz;
     }
+    // floating terminals / restaurants on the river: the pier pontoons are modelled separately
+    {
+      const c0 = outer[0].pts.reduce((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]).map((v) => v / outer[0].pts.length);
+      if (sdfAt(c0[0], c0[1]) < 0) {
+        if (t.man_made === 'pier') continue;
+        if (isEst) h = 7.5;
+      }
+    }
     const minH = num(t.min_height) || 0;
     // base: lowest ground under the footprint (buildings never float)
     let base = Infinity;
@@ -713,6 +721,41 @@ scene.roads = roadsOut
   .filter((r) => r.pts.some(([x, z]) => sdfAt(x, z) < 700))
   .map((r) => ({ hw: r.hw, oneway: r.oneway, lanes: r.lanes, bridge: r.bridge, name: r.name, pts: simplify(r.pts, 1.5).map(([x, z]) => [+x.toFixed(1), +(r.bridge ? -1 : landH(x, z) + 0.15).toFixed(2), +z.toFixed(1)]) }));
 console.log(`roads: ${scene.roads.length}`);
+
+// ---- elevated roads (viaducts and ramps along the banks) -----------------------------------
+// OSM bridge=yes road ways that are not river crossings (those are modelled as bridges above).
+// Deck height: ground + 6 m per layer; free ends ramp down to the ground over ~70 m.
+{
+  const VIA_HW = { motorway: 24, trunk: 20, primary: 17, secondary: 12, motorway_link: 8, trunk_link: 8, primary_link: 8 };
+  const ways = load('roads').filter((e) => {
+    const t = e.tags || {};
+    return t.bridge && !t.railway && VIA_HW[t.highway] && e.geometry && e.geometry.length >= 2;
+  });
+  const endCount = new Map();
+  for (const e of ways) for (const id of [e.nodes[0], e.nodes[e.nodes.length - 1]]) endCount.set(id, (endCount.get(id) || 0) + 1);
+  scene.viaducts = [];
+  for (const e of ways) {
+    const pts = e.geometry.map((p) => toXZ(p.lat, p.lon));
+    const water = pts.filter(([x, z]) => sdfAt(x, z) < 0).length;
+    if (water > pts.length * 0.3) continue;              // river crossing: modelled as a bridge
+    if (pts.every(([x, z]) => sdfAt(x, z) > 1200)) continue; // not visible from the river
+    const layer = Math.max(1, Math.min(3, Number(e.tags.layer) || 1));
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    const L = cum[cum.length - 1];
+    const freeA = endCount.get(e.nodes[0]) === 1, freeB = endCount.get(e.nodes[e.nodes.length - 1]) === 1;
+    const out = pts.map(([x, z], i) => {
+      const g = landH(x, z);
+      let h = 6.0 * layer;
+      const r = 70;
+      if (freeA) h *= Math.min(1, cum[i] / r);
+      if (freeB) h *= Math.min(1, (L - cum[i]) / r);
+      return [+x.toFixed(1), +(g + Math.max(h, 0.2)).toFixed(2), +z.toFixed(1), +g.toFixed(2)];
+    });
+    scene.viaducts.push({ hw: e.tags.highway, width: VIA_HW[e.tags.highway], oneway: e.tags.oneway === 'yes' || e.tags.highway === 'motorway', pts: out });
+  }
+  console.log(`viaducts: ${scene.viaducts.length}`);
+}
 
 // ---- piers / terminal ---------------------------------------------------------------------
 scene.piers = [];

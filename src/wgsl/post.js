@@ -47,6 +47,10 @@ fn karis(c: vec3f) -> f32 { return 1.0 / (1.0 + luma(c) * 0.25); }
     let w0 = karis(g0) * 0.125; let w1 = karis(g1) * 0.125; let w2 = karis(g2) * 0.125;
     let w3 = karis(g3) * 0.125; let w4 = karis(g4) * 0.5;
     o = (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) / (w0 + w1 + w2 + w3 + w4);
+    // limit what the sun disc and specular glints feed into the bloom chain: an unclamped
+    // sun leaves visible concentric steps from the mip up-sampling across the whole sky
+    let lo = luma(o);
+    o *= min(1.0, 400.0 / max(lo, 1e-6));
   } else {
     o = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
   }

@@ -1,6 +1,6 @@
 // App entry: WebGPU check, loading with progress/retry, the voyage loop and the Korean UI.
 import { loadScene } from './scene/loader.js';
-import { buildBridges } from './scene/bridges.js';
+import { buildBridges, buildViaducts } from './scene/bridges.js';
 import { buildBoat, BOAT } from './scene/boat.js';
 import { buildLandmarks } from './scene/landmarks.js';
 import { buildTreeTemplate } from './scene/trees.js';
@@ -107,11 +107,12 @@ async function load() {
     const [buildings] = await Promise.all([buildingsInWorker(b)]);
     setProgress(0.75, '교량·선박 생성 중');
     const bridges = buildBridges(data.meta.bridges);
+    const viaducts = buildViaducts(data.meta.viaducts || []);
     const boatGeo = buildBoat();
     boatGeo.dims = { length: BOAT.length, beam: BOAT.beam, draft: BOAT.draft };
     path = new Path(ROUTE_POINTS, 2);
     geom = {
-      path, buildings, bridges, boat: boatGeo,
+      path, buildings, bridges, viaducts, boat: boatGeo,
       landmarks: buildLandmarks(data.meta.landmarks),
       misc: buildPiers(data.meta.piers),
       treeTemplate: buildTreeTemplate(),
@@ -177,7 +178,7 @@ function setupSim() {
   sections = routeSections(path, data.meta.bridges);
   deckCam = new DeckCamera(geom.boat.viewpoints, geom.boat.walk);
   freeCam = new FreeCamera();
-  const lanes = [...geom.bridges.lanes.map((l) => ({ pts: l.pts, speed: 15 }))];
+  const lanes = [...geom.bridges.lanes.map((l) => ({ pts: l.pts, speed: 15 })), ...geom.viaducts.lanes];
   for (const r of data.meta.roads) {
     if (r.bridge) continue;
     const pts = r.pts.map(([x, y, z]) => [x, y, z]);
@@ -206,6 +207,11 @@ function applyScene(sc) {
   boat.place(sc.s);
   if (sc.view) deckCam.setView(sc.view, true);
   if (sc.yaw !== undefined) deckCam.yaw = sc.yaw;
+  if (sc.lookAt) {
+    // aim at a world point from the viewpoint (approximate: from the boat centre)
+    const az = Math.atan2(sc.lookAt[0] - boat.x, -(sc.lookAt[1] - boat.z)) / D2R;
+    deckCam.yaw = ((az - boat.heading / D2R) % 360 + 540) % 360 - 180;
+  }
   if (sc.yawToAz !== undefined) deckCam.yaw = ((sc.yawToAz - boat.heading / D2R) % 360 + 540) % 360 - 180;
   if (sc.pitch !== undefined) deckCam.pitch = sc.pitch;
   if (sc.fov) deckCam.fovY = sc.fov * D2R;
