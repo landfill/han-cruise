@@ -7,6 +7,10 @@ export const SKY_W = 256;      // sky-view LUT size
 export const SKY_H = 144;
 export const ENV_SIZE = 128;   // environment cube face size
 export const ENV_MIPS = 8;
+export const DOME_W = 2048;    // cached cumulus panorama (upper hemisphere), refreshed 1/32 per frame
+export const DOME_H = 512;
+export const CSHADOW_SIZE = 256;     // cloud shadow map texels, covering CSHADOW_EXTENT metres
+export const CSHADOW_EXTENT = 12000;
 export const WAKE_RES = 512;   // boat wake simulation grid
 export const WAKE_SIZE = 256;  // metres covered by the wake grid
 
@@ -37,6 +41,7 @@ const FIELDS = [
   ['foamP', 'vec4f'],           // wake foam intensity, -, -, -
   ['fogExt', 'vec4f'],          // rgb extinction per metre near the ground, w = haze floor
   ['cloudP', 'vec4f'],          // low cloud altitude km, coverage, optical density, wind time
+  ['cloudMap', 'vec4f'],        // cloud shadow map origin x, z (m), extent (m), cloud dome refresh phase
   ['night', 'vec4f'],           // x = darkness 0..1, y = artificial light scale, z = skyglow, w = window lit fraction
   ['boat', 'vec4f'],            // x, z, heading (rad, cw from north), speed m/s
   ['boat2', 'vec4f'],           // yaw rate, hull length, beam, draft

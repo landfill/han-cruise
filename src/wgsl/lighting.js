@@ -16,6 +16,8 @@ export const SCENE_BINDINGS = /* wgsl */ `
 @group(0) @binding(8) var sampR: sampler;
 @group(0) @binding(9) var occTex: texture_2d<f32>;
 @group(0) @binding(10) var sceneSdf: texture_2d<f32>;
+@group(0) @binding(11) var cloudDome: texture_2d<f32>;
+@group(0) @binding(12) var cloudShadowTex: texture_2d<f32>;
 `;
 
 export const LIGHTING_WGSL = FRAME_WGSL + ATMO_CORE_WGSL + SCENE_BINDINGS + SKY_RENDER_FUNCS + /* wgsl */ `
@@ -25,7 +27,14 @@ const ENV_TEXELS_PER_RAD: f32 = ${ENV_SIZE}.0 / 1.5708;
 fn isReflPass() -> bool { return F.camFwd.w > 0.5; }
 
 // Direct sunlight reaching the scene (atmosphere + cloud transmittance)
-fn sunLight() -> vec3f { return sunIlluminance() * sunVis[0] * step(-0.02, F.sunDir.y); }
+// cumulus shadow on the ground at a scene point (precomputed map around the camera)
+fn cloudShadowAt(world: vec3f) -> f32 {
+  let uv = (world.xz - F.cloudMap.xy) / F.cloudMap.z;
+  return textureSampleLevel(cloudShadowTex, sampC, uv, 0.0).r;
+}
+fn sunLight() -> vec3f { return sunIlluminance() * sunVis[0] * step(-0.02, F.sunDir.y) * cloudShadowAt(F.camPos.xyz); }
+// ... at a scene point, under the drifting cumulus shadows
+fn sunLightAt(world: vec3f) -> vec3f { return sunIlluminance() * sunVis[0] * step(-0.02, F.sunDir.y) * cloudShadowAt(world); }
 // Moonlight: moonDir.w is the lunar illuminance in the same units as the sun (full moon is
 // ~2.5e-6 of full sunlight); slightly blue-shifted the way night photographs render it.
 fn moonLight() -> vec3f {
@@ -133,7 +142,7 @@ fn shade(s: Surf, n: vec3f, rel: vec3f, world: vec3f) -> vec3f {
   let l = F.sunDir.xyz;
   let sh = shadowAt(rel, n);
   let occ = overheadOcclusion(world);
-  let sun = sunLight() * sh * occ * (1.0 - s.sunOcc);
+  let sun = sunLightAt(world) * sh * occ * (1.0 - s.sunOcc);
   let nl = max(dot(n, l), 0.0);
   let diffCol = s.albedo * (1.0 - s.metal);
   let f0 = mix(s.f0, s.albedo, s.metal);

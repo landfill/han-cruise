@@ -1,15 +1,16 @@
 // WebGPU renderer for the Han River scene.
 // Pass order per frame:
-//   compute: FFT waves, sky-view LUT, sun visibility, env cube face (+mips), height probe
+//   compute: FFT waves, sky-view LUT, sun visibility, cumulus dome (1/32 of the rows) and cloud
+//            shadow map, env cube face (+mips), height probe
 //   (the boat wake is analytic, evaluated in the water shader from a route field built at load)
 //   shadow:  3 sun cascades (buildings, bridges, boat, trees)
 //   reflect: mirrored camera at half resolution (land, buildings, bridges, boat, trees, sky, lights)
 //   main:    4x MSAA HDR (land, structures, boat, trees, water, sky, lights)
 //   post:    bloom, adaptive exposure, AgX tone mapping
 // Per-frame code reuses preallocated typed arrays; GPU timing via timestamp queries.
-import { FRAME, CASCADES, SKY_W, SKY_H, ENV_SIZE, ENV_MIPS } from '../wgsl/common.js';
+import { FRAME, CASCADES, SKY_W, SKY_H, ENV_SIZE, ENV_MIPS, DOME_W, DOME_H, CSHADOW_SIZE, CSHADOW_EXTENT } from '../wgsl/common.js';
 import { simInit, simEvolve, fftRows, fftCols, SIM_MIPS, FOAM_TEX, RGBA8_MIPS, RGBA16_MIPS } from '../wgsl/sim.js';
-import { TRANS_LUT, MS_LUT, SKYVIEW_LUT, ENV_CUBE, CUBE_MIPS, SUN_VIS } from '../wgsl/sky.js';
+import { TRANS_LUT, MS_LUT, SKYVIEW_LUT, ENV_CUBE, CUBE_MIPS, SUN_VIS, CLOUD_DOME, CLOUD_SHADOW } from '../wgsl/sky.js';
 import { WATER, HEIGHT_PROBE } from '../wgsl/water.js';
 import { TERRAIN, DETAIL_TEX } from '../wgsl/terrain.js';
 import { MESH, MESH_SHADOW, MESH_STRIDE } from '../wgsl/mesh.js';
@@ -152,7 +153,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   // compute pipelines
   // ------------------------------------------------------------------------------------------
   const [initPipe, evolvePipe, rowsPipe, colsPipe, simMipPipe, foamGenPipe, rgba8MipPipe, rgba16MipPipe,
-    transPipe, msPipe, skyViewPipe, envPipe, cubeMipPipe, sunVisPipe, detailPipe, pathPipe, probePipe, exposurePipe] = await Promise.all([
+    transPipe, msPipe, skyViewPipe, envPipe, cubeMipPipe, sunVisPipe, detailPipe, pathPipe, probePipe, exposurePipe,
+    domePipe, cShadowPipe] = await Promise.all([
     computePipe(simInit(N), 'sim init'), computePipe(simEvolve(N), 'sim evolve'), computePipe(fftRows(N), 'fft rows'),
     computePipe(fftCols(N), 'fft cols'), computePipe(SIM_MIPS, 'sim mips'), computePipe(FOAM_TEX, 'foam tex'),
     computePipe(RGBA8_MIPS, 'rgba8 mips'), computePipe(RGBA16_MIPS, 'rgba16 mips'),
@@ -160,6 +162,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     computePipe(ENV_CUBE, 'env cube'), computePipe(CUBE_MIPS, 'cube mips'), computePipe(SUN_VIS, 'sun visibility'),
     computePipe(DETAIL_TEX, 'detail tex'), computePipe(PATH_FIELD, 'path field'), computePipe(HEIGHT_PROBE, 'probe'),
     computePipe(EXPOSURE, 'exposure'),
+    computePipe(CLOUD_DOME, 'cloud dome'), computePipe(CLOUD_SHADOW, 'cloud shadow'),
   ]);
 
   // ---- FFT simulation resources ----
@@ -238,7 +241,16 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   const bgTrans = bgAuto(transPipe, [{ buffer: atmoUBO }, transView]);
   const bgMS = bgAuto(msPipe, [{ buffer: atmoUBO }, transView, sampClamp, msView]);
   const bgSkyView = bgAuto(skyViewPipe, [{ buffer: frameUBO }, transView, msView, sampClamp, skyView]);
-  const bgEnv = bgAuto(envPipe, [{ buffer: frameUBO }, transView, skyView, sampClamp, lvl(envTex, 0)]);
+  // cumulus: cached panorama + ground shadow map around the camera
+  const domeTex = device.createTexture({ label: 'cloud dome', size: [DOME_W, DOME_H], format: 'rgba16float', usage: T.TEXTURE_BINDING | T.STORAGE_BINDING });
+  const cShadowTex = device.createTexture({ label: 'cloud shadow', size: [CSHADOW_SIZE, CSHADOW_SIZE], format: 'rgba16float', usage: T.TEXTURE_BINDING | T.STORAGE_BINDING });
+  const domeView = domeTex.createView(), cShadowView = cShadowTex.createView();
+  const bgDome = bgAuto(domePipe, [{ buffer: frameUBO }, transView, skyView, sampClamp, domeView]);
+  // (the shadow pass only reads the frame uniforms: its auto layout keeps bindings 0 and 4)
+  const bgCShadow = device.createBindGroup({ layout: cShadowPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: frameUBO } }, { binding: 4, resource: cShadowView }] });
+  let domePhase = 0, domeFull = true;
+  const cloudOrigin = [0, 0];
+  const bgEnv = bgAuto(envPipe, [{ buffer: frameUBO }, transView, skyView, sampClamp, lvl(envTex, 0), domeView]);
   const bgSunVis = bgAuto(sunVisPipe, [{ buffer: frameUBO }, transView, skyView, sampClamp, { buffer: sunVisBuf }]);
   const bgCubeMips = [];
   for (let m = 1; m < ENV_MIPS; m++) bgCubeMips.push(bgAuto(cubeMipPipe, [lvl(envTex, m - 1), lvl(envTex, m)]));
@@ -275,6 +287,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       { binding: 8, visibility: VF, sampler: { type: 'filtering' } },
       { binding: 9, visibility: VF, texture: { sampleType: 'float' } },
       { binding: 10, visibility: VF, texture: { sampleType: 'float' } },
+      { binding: 11, visibility: VF, texture: { sampleType: 'float' } },
+      { binding: 12, visibility: VF, texture: { sampleType: 'float' } },
     ],
   });
   const sceneBG = (ubo) => device.createBindGroup({
@@ -284,6 +298,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       { binding: 6, resource: sampShadow }, { binding: 7, resource: { buffer: sunVisBuf } }, { binding: 8, resource: sampRepeat },
       { binding: 9, resource: occTex.createView() },
       { binding: 10, resource: sdfTex.createView() },
+      { binding: 11, resource: domeView }, { binding: 12, resource: cShadowView },
     ],
   });
   const bgSceneMain = sceneBG(frameUBO), bgSceneRefl = sceneBG(reflUBO);
@@ -646,7 +661,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     set4(f, 'foamP', env.wakeFoam, env.wakeGain, 0, 0);
     const hz = env.haze;
     set4(f, 'fogExt', (5.802e-3 + 4.4e-3 * hz) * 1e-3, (13.558e-3 + 4.4e-3 * hz) * 1e-3, (33.1e-3 + 4.4e-3 * hz) * 1e-3, env.hazeFloor);
-    set4(f, 'cloudP', 1.6, env.clouds, 2.2, time);
+    set4(f, 'cloudP', 1.5, env.clouds, 38.0, time);
+    set4(f, 'cloudMap', cloudOrigin[0], cloudOrigin[1], CSHADOW_EXTENT, domePhase);
     set4(f, 'night', env.darkness, env.lights, env.skyglow, env.windowsLit);
     set4(f, 'shadowP', 1 / Q.shadow, SHADOW_FAR[0], SHADOW_FAR[1], SHADOW_FAR[2]);
     set4(f, 'sdfP', sdfM.x0, sdfM.z0, sdfM.w * sdfM.cell, sdfM.h * sdfM.cell);
@@ -716,6 +732,10 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     viewFromBasis(tmpM, mr, mu, mf);
     mul(vpRefl, proj, tmpM);
     buildShadows(cam, env);
+    // cloud shadow map around the camera, snapped to its texels so it does not swim
+    const cst = CSHADOW_EXTENT / CSHADOW_SIZE;
+    cloudOrigin[0] = Math.floor((cam.pos[0] - CSHADOW_EXTENT / 2) / cst) * cst;
+    cloudOrigin[1] = Math.floor((cam.pos[2] - CSHADOW_EXTENT / 2) / cst) * cst;
 
     const f = frameF;
     fillCommon(f, env, time);
@@ -915,6 +935,13 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     cp.setPipeline(probePipe); cp.setBindGroup(0, bgProbe); cp.dispatchWorkgroups(1);
     cp.setPipeline(skyViewPipe); cp.setBindGroup(0, bgSkyView); cp.dispatchWorkgroups(Math.ceil(SKY_W / 8), Math.ceil(SKY_H / 8));
     cp.setPipeline(sunVisPipe); cp.setBindGroup(0, bgSunVis); cp.dispatchWorkgroups(1);
+    cp.setPipeline(cShadowPipe); cp.setBindGroup(0, bgCShadow); cp.dispatchWorkgroups(CSHADOW_SIZE / 8, CSHADOW_SIZE / 8);
+    // the dome before the env cube, which samples it
+    if (domeFull || envFull > 0) domeFull = true;
+    cp.setPipeline(domePipe); cp.setBindGroup(0, bgDome);
+    cp.dispatchWorkgroups(DOME_W / 8, DOME_H / 256, domeFull ? 32 : 1);
+    domeFull = false;
+    domePhase = (domePhase + 1) % 32;
     cp.setPipeline(envPipe); cp.setBindGroup(0, bgEnv);
     cp.dispatchWorkgroups(ENV_SIZE / 8, ENV_SIZE / 8, envFull > 0 ? 6 : 1);
     if (envFull > 0) envFull--;

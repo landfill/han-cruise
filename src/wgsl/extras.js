@@ -1,9 +1,9 @@
 // Sky background, trees, light sprites (lamps, traffic, obstruction lights) and auto exposure.
 import { LIGHTING_WGSL } from './lighting.js';
-import { SKY_CLOUD_FUNCS } from './sky.js';
+import { SKY_CLOUD_FUNCS, CLOUD_DOME_SAMPLE } from './sky.js';
 
 // Full-resolution sky + clouds (adapted from web-ocean's sky pass, MIT).
-export const SKY_BG = LIGHTING_WGSL + SKY_CLOUD_FUNCS + /* wgsl */ `
+export const SKY_BG = LIGHTING_WGSL + SKY_CLOUD_FUNCS + CLOUD_DOME_SAMPLE + /* wgsl */ `
 struct VO { @builtin(position) pos: vec4f, @location(0) ndc: vec2f };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
   let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
@@ -18,13 +18,11 @@ struct VO { @builtin(position) pos: vec4f, @location(0) ndc: vec2f };
   var d2 = dir;
   d2.y = max(d2.y, 0.0005);
   d2 = normalize(d2);
-  let hl = hitLayer(d2, F.cloudP.x);
-  let el = lowEdge(hl.q, hl.t * pixAng / hl.mu, 7);
   let hh = hitLayer(d2, 4.5);
   let eh = highEdge(hh.q, hh.t * pixAng / hh.mu, 6);
-  let aa = vec2f(fwidth(el), fwidth(eh));
+  let aa = vec2f(0.0, fwidth(eh));
   var sunT = 1.0;
-  let cl = cloudLayers(d2, pixAng, aa, &sunT);
+  let cl = cloudLayers(d2, pixAng, aa, cloudDomeAt(d2, sampR), &sunT);
   var L = skyAtmo(d2) * (1.0 - cl.a) + cl.rgb + sunDisk(dir) * sunT + moonDisk(dir) * sunT;
   // below the horizon (only visible past the edge of the terrain): hazy ground
   if (dir.y < 0.0) { L = mix(L, skyAtmo(normalize(vec3f(dir.x, 0.002, dir.z))) * 0.7, smoothstep(0.0, -0.05, dir.y)); }
@@ -110,7 +108,7 @@ struct VSOut {
     // light transmitted through the leaves when the sun is behind the tree
     let v = normalize(-in.rel);
     let back = pow(max(dot(-v, F.sunDir.xyz), 0.0), 4.0);
-    col += s.albedo * vec3f(1.2, 1.4, 0.6) * sunLight() * shadowAt(in.rel, n) * back * 0.35;
+    col += s.albedo * vec3f(1.2, 1.4, 0.6) * sunLightAt(in.world) * shadowAt(in.rel, n) * back * 0.35;
   }
   col = applyFog(col, in.rel);
   return vec4f(col, select(1.0, length(in.rel), isReflPass()));

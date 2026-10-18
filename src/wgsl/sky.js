@@ -2,7 +2,7 @@
 // Adapted from web-ocean (c) 2026 Maksymilian Dendura, MIT licence (see THIRD_PARTY_NOTICES.md).
 // Changes: city skyglow and lit cloud bases at night, moon disc, env cube horizon band shows
 // a dim distant city instead of open sea, resolution constants for a lighter GPU budget.
-import { FRAME_WGSL, ATMO_CORE_WGSL, NOISE_WGSL, SKY_W, SKY_H, ENV_SIZE } from './common.js';
+import { FRAME_WGSL, ATMO_CORE_WGSL, NOISE_WGSL, SKY_W, SKY_H, ENV_SIZE, DOME_W, DOME_H, CSHADOW_SIZE } from './common.js';
 
 const ATMO_UNIFORM = /* wgsl */ `
 struct AtmoP { haze: vec4f };   // x = mie multiplier
@@ -237,15 +237,8 @@ fn skyGlow(dir: vec3f) -> vec3f {
 fn skyAtmo(dir: vec3f) -> vec3f {
   return textureSampleLevel(skyLUT, sampC, skyViewUV(dir), 0.0).rgb * F.sunDir.w + skyGlow(dir);
 }
-`;
 
-// Clouds + full sky radiance (needs the same bindings as SKY_RENDER_FUNCS).
-export const SKY_CLOUD_FUNCS = /* wgsl */ `
-
-// ---- clouds -------------------------------------------------------------
-// Two thin, light-aware layers: broken low cumulus with cauliflower edges (2 km) and
-// high cirrus wisps (7 km). Each is shaded with self-shadowing towards the sun, bright
-// sun-facing rims, silver linings on thin back-lit parts and warm multiple scattering.
+// ---- fair-weather cumulus: footprint field (shared by the sky and the scene's cloud shadows) --
 const CLOUD_ROT: mat2x2f = mat2x2f(0.8, 0.6, -0.6, 0.8);
 // fbm whose octaves fade once smaller than the pixel footprint fp (noise units);
 // 'billow' turns the small octaves into bulgy |noise| for cauliflower-like edges
@@ -266,22 +259,160 @@ fn cloudFbm(p: vec2f, fp: f32, oct: i32, billow: f32) -> f32 {
   }
   return s;
 }
-// Signed "edge" functions (cloud where > 0) and their density ramps. The edge value is
-// what the sky pass differentiates (fwidth) to anti-alias the cloud silhouettes analytically.
-fn lowEdge(q: vec2f, fp: f32, oct: i32) -> f32 {
+// cloud base and top (km above the river): cumulus humilis / mediocris of an autumn afternoon
+fn cuBase() -> f32 { return F.cloudP.x; }
+fn cuTop() -> f32 { return F.cloudP.x + 0.85; }
+// q: horizontal position (km, world x/z). > 0 under a cloud; larger = thicker, taller core.
+fn cuCover(q: vec2f, fp: f32, oct: i32) -> f32 {
   let t = F.cloudP.w;
-  var p = q * 0.38 + vec2f(t * 0.004, t * 0.0012);
-  let w = vec2f(gnoise(p * 0.3 + vec2f(1.7, 9.2)), gnoise(p * 0.3 + vec2f(8.3, 2.8)));
-  p += w * 1.4;
-  // slightly elongated cells (cloud streets), mildly billowy small scales for ragged edges
-  let base = cloudFbm(p * vec2f(1.0, 1.7), fp * 0.65, oct, 0.35) * 1.3 + 0.5;
-  let large = gnoise(q * 0.05 + vec2f(3.1, 1.3)) * 0.7;
-  return base + large - (1.0 - F.cloudP.y);
+  // drifting with a ~6 m/s north-westerly
+  var p = q * 0.6 + vec2f(-t * 0.0022, -t * 0.0028);
+  let w = vec2f(gnoise(p * 0.35 + vec2f(1.7, 9.2)), gnoise(p * 0.35 + vec2f(8.3, 2.8)));
+  p += w * 0.8;
+  let big = gnoise(q * 0.07 + vec2f(3.1, 1.3)) * 0.4;
+  let base = big + 0.5 - (1.0 - F.cloudP.y);
+  // octaves summed by hand so clear sky can stop early: after two octaves the remaining ones
+  // can add at most ~0.36
+  var s = 0.0; var a = 0.5; var f = 1.0; var pp = p;
+  for (var i = 0; i < oct; i++) {
+    let w = 1.0 - smoothstep(0.08, 0.28, fp * 0.6 * f);
+    var nn = gnoise(pp);
+    if (i >= 2) { nn = mix(nn, abs(nn) * 2.0 - 0.38, 0.3); }
+    s += a * nn * w;
+    if (i == 1 && base + s * 1.4 < -0.42) { break; }
+    pp = CLOUD_ROT * pp * 2.03 + vec2f(13.1, 7.7);
+    f *= 2.03;
+    a *= 0.5;
+  }
+  return base + s * 1.4;
 }
-fn lowSoft(fp: f32) -> f32 { return 0.38 + min(fp * 0.65, 1.0) * 0.3; }
-fn lowDensity(q: vec2f, fp: f32, oct: i32) -> f32 {
-  return clamp(lowEdge(q, fp, oct) / lowSoft(fp), 0.0, 1.0);
+// direct-sun transmittance through the cumulus deck above a scene point (baked into the
+// cloud shadow map each frame; surfaces read the map)
+fn cloudShadow(world: vec3f) -> f32 {
+  if (F.cloudP.y < 0.001 || F.sunDir.y < 0.03) { return 1.0; }
+  let hm = (cuBase() + cuTop()) * 0.5;
+  let q = world.xz * 0.001 + F.sunDir.xz / F.sunDir.y * (hm - world.y * 0.001);
+  let c = cuCover(q, 0.04, 3);
+  return mix(1.0, 0.04, smoothstep(0.0, 0.12, c));
 }
+`;
+
+// Clouds + full sky radiance (needs the same bindings as SKY_RENDER_FUNCS).
+export const SKY_CLOUD_FUNCS = /* wgsl */ `
+
+// ---- clouds -------------------------------------------------------------
+// A volumetric cumulus slab (base ~1.5 km, ray-marched; footprints from cuCover) and a thin
+// high layer (4.5 km) shaded as a sheet with self-shadowing towards the sun.
+
+// value noise in [0, 1] for the 3D erosion of cumulus edges
+fn vnoise3(p: vec3f) -> f32 {
+  let i = vec3i(floor(p));
+  let f = p - floor(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  var v: array<f32, 8>;
+  for (var k = 0; k < 8; k++) {
+    let o = vec3i(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+    let c = i + o;
+    v[k] = f32(pcgHash((u32(c.x) * 73856093u) ^ pcgHash((u32(c.y) * 19349663u) ^ pcgHash(u32(c.z) * 83492791u))) >> 8u) / 16777216.0;
+  }
+  return mix(mix(mix(v[0], v[1], u.x), mix(v[2], v[3], u.x), u.y), mix(mix(v[4], v[5], u.x), mix(v[6], v[7], u.x), u.y), u.z);
+}
+// density at (x km, altitude km, z km). Flat bases and domed tops whose height follows the
+// footprint strength.
+// 'erode' (0..1) cuts the edges into billows; callers fade it out where the march is coarse.
+fn cuDensity(pos: vec3f, fp: f32, erode: f32) -> f32 {
+  let h = (pos.y - cuBase()) / (cuTop() - cuBase());
+  if (h <= 0.0 || h >= 1.0) { return 0.0; }
+  let c = cuCover(pos.xz, fp, select(3, 4, erode > 0.0));
+  if (c < -0.1) { return 0.0; }
+  // iso-surface c * 2.8 = 1.3 h^2.5 around a footprint peak: a flat-based dome
+  var d = (c * 2.8 - h * h * sqrt(h) * 1.3) * 1.8;
+  d *= smoothstep(0.0, 0.08, h);
+  if (erode > 0.0 && d > -0.15) {
+    let t = F.cloudP.w;
+    let wp = pos * vec3f(7.0, 9.0, 7.0) + vec3f(-t * 0.02, t * 0.004, -t * 0.028);
+    let n = vnoise3(wp) * 0.62 + vnoise3(wp * 2.7 + vec3f(5.1, 2.3, 7.7)) * 0.38;
+    d -= (n - 0.25) * 0.42 * (1.0 - clamp(d * 1.6, 0.0, 1.0)) * erode;
+  }
+  return clamp(d, 0.0, 1.0);
+}
+
+// Ray-march the slab. Returns (premultiplied radiance, opacity).
+fn cumulus(dir: vec3f, pixAng: f32, steps: i32, jitter: f32) -> vec4f {
+  if (F.cloudP.y < 0.001 || dir.y <= 0.0) { return vec4f(0.0); }
+  let ro = vec3f(0.0, camR(), 0.0);
+  let t0 = raySphere(ro, dir, RG + cuBase()).y;
+  let t1 = raySphere(ro, dir, RG + cuTop()).y;
+  // clear band near the horizon, where the low sun shines under the deck
+  let far = 1.0 - smoothstep(22.0, 40.0, t0);
+  if (t0 <= 0.0 || far <= 0.0) { return vec4f(0.0); }
+  let tEnd = min(t1, t0 + 9.0);
+  let camQ = F.camPos.xz * 0.001;
+  // 1) coarse search for the first cloud along the ray (no erosion, cheap early-outs)
+  let nSearch = 16;
+  let dtc = (tEnd - t0) / f32(nSearch);
+  var tHit = -1.0;
+  for (var i = 0; i < nSearch; i++) {
+    let t = t0 + (f32(i) + jitter) * dtc;
+    let p = ro + dir * t;
+    let r = length(p);
+    if (cuDensity(vec3f(p.x + camQ.x, r - RG, p.z + camQ.y), t * pixAng, 0.0) > 0.0) { tHit = max(t - dtc, t0); break; }
+  }
+  if (tHit < 0.0) { return vec4f(0.0); }
+  // 2) fine march from just before the hit
+  let dt = clamp((tEnd - tHit) / f32(steps), 0.03, 0.3);
+  let sd = F.sunDir.xyz;
+  let cosT = dot(dir, sd);
+  let sigma0 = F.cloudP.z;   // extinction per km at density 1
+  // ambient: sky dome above, horizon band at the sides, a dim ground bounce below
+  let skyUp = skyAtmo(vec3f(0.0, 1.0, 0.0));
+  let skySide = skyAtmo(normalize(vec3f(dir.x, 0.05, dir.z)));
+  var T = 1.0;
+  var L = vec3f(0.0);
+  for (var i = 0; i < steps; i++) {
+    let t = tHit + (f32(i) + jitter) * dt;
+    if (t > tEnd) { break; }
+    let p = ro + dir * t;
+    let r = length(p);
+    let alt = r - RG;
+    let pos = vec3f(p.x + camQ.x, alt, p.z + camQ.y);
+    let fp = t * pixAng;
+    // billowy erosion only where the steps resolve it (~140 m noise wavelength)
+    let d = cuDensity(pos, fp, 1.0 - smoothstep(0.12, 0.3, dt));
+    if (d > 0.002) {
+      let up = p / r;
+      let smu = dot(up, sd);
+      let sunC = sampleTrans(r, smu) * F.sunDir.w * select(1.0, 0.0, sunBelowHorizon(r, smu));
+      // optical depth towards the sun (2 taps out to ~0.6 km)
+      let tauS = (cuDensity(pos + sd * 0.08, fp, 0.0) * 0.18 + cuDensity(pos + sd * 0.35, fp, 0.0) * 0.45) * sigma0;
+      // multiple scattering as a sum of ever softer, less extinguished octaves
+      var ms = 0.0;
+      var a = 1.0; var b = 1.0; var c = 1.0;
+      for (var o = 0; o < 3; o++) {
+        ms += a * exp(-tauS * b) * mix(phaseHG(cosT, 0.75 * c), phaseHG(cosT, -0.25 * c), 0.3);
+        a *= 0.5; b *= 0.45; c *= 0.5;
+      }
+      // dark edges facing the viewer when front-lit ("powder"): little in-scattering at the
+      // thin rim, fading when looking towards the sun
+      let powder = mix(1.0 - exp(-d * sigma0 * 0.18), 1.0, smoothstep(-0.1, 0.8, cosT));
+      let h = clamp((alt - cuBase()) / (cuTop() - cuBase()), 0.0, 1.0);
+      let amb = (skyUp * (0.3 + 0.7 * h) + skySide * 0.3) * (1.0 - 0.5 * d);
+      // at night the bases reflect the city (the orange ceiling); moonlight on the tops
+      let night = vec3f(1.0, 0.70, 0.45) * F.night.z * 0.9 * (1.0 - 0.6 * h)
+                + F.moonDir.w * max(F.moonDir.y, 0.0) * vec3f(0.62, 0.68, 0.80) * 0.3;
+      let S = sunC * ms * powder * 3.0 + amb + night;
+      let Tr = exp(-d * sigma0 * dt);
+      L += T * S * (1.0 - Tr);
+      T *= Tr;
+      if (T < 0.02) { break; }
+    }
+  }
+  let alpha = (1.0 - T) * far;
+  // aerial perspective between the camera and the deck
+  let vis = exp(-t0 * 0.02 * (0.6 + 0.4 * F.atmo.x));
+  return vec4f(L * far * vis, alpha * vis);
+}
+
 fn highEdge(q: vec2f, fp: f32, oct: i32) -> f32 {
   let t = F.cloudP.w;
   // altostratus deck: smooth, slightly fibrous
@@ -340,34 +471,12 @@ fn shadeLayer(dir: vec3f, h: CloudHit, hc: f32, d: f32, s1: f32, s2: f32, s3: f3
 // returns (premultiplied radiance, fraction of the background sky hidden)
 // aa: per-layer edge change per pixel (fwidth of the edge function); negative = estimate it
 // from the pixel footprint (compute passes, which have no derivatives)
-fn cloudLayers(dir: vec3f, pixAng: f32, aa: vec2f, sunT: ptr<function, f32>) -> vec4f {
+// lo: the cumulus in front (premultiplied radiance, opacity), normally read from the cached
+// dome (cloudDomeAt); zero for the sun visibility pass (the scene has per-point cloud shadows)
+fn cloudLayers(dir: vec3f, pixAng: f32, aa: vec2f, lo: vec4f, sunT: ptr<function, f32>) -> vec4f {
   *sunT = 1.0;
   if (dir.y <= 0.0) { return vec4f(0.0); }
   let sxz = F.sunDir.xz / max(length(F.sunDir.xz), 1e-4);
-  var lo = vec4f(0.0);
-  var loVis = 1.0;
-  if (F.cloudP.y > 0.001) {
-    let hc = F.cloudP.x;
-    let h = hitLayer(dir, hc);
-    // clear band near the horizon, where the low sun shines under the clouds
-    let far = 1.0 - smoothstep(18.0, 36.0, h.t);
-    if (far > 0.0) {
-      let fp = h.t * pixAng / h.mu;
-      let e = lowEdge(h.q, fp, 7);
-      let d = clamp(e / lowSoft(fp), 0.0, 1.0) * far;
-      if (d > 0.002) {
-        let s1 = lowDensity(h.q + sxz * 0.08, fp, 5) * far;
-        let s2 = lowDensity(h.q + sxz * 0.25, fp, 4) * far;
-        let s3 = lowDensity(h.q + sxz * 0.6, fp, 3) * far;
-        lo = shadeLayer(dir, h, hc, d, s1, s2, s3, F.cloudP.z, 0.75);
-        // opacity saturates within a sliver of the density ramp, making a hard silhouette:
-        // spread it over ~1.5 pixels
-        let aw = select(fp * 0.38 * 2.5, aa.x, aa.x >= 0.0);
-        lo *= smoothstep(0.0, aw * 1.5 + 1e-6, e);
-        loVis = exp(-h.t * 0.02 * (0.6 + 0.4 * F.atmo.x));
-      }
-    }
-  }
   var hi = vec4f(0.0);
   var hiVis = 1.0;
   if (F.atmo.z > 0.001) {
@@ -394,8 +503,8 @@ fn cloudLayers(dir: vec3f, pixAng: f32, aa: vec2f, sunT: ptr<function, f32>) -> 
   *sunT = (1.0 - lo.a) * (1.0 - hi.a);
   // low layer in front; aerial perspective fades each layer into the haze without making
   // it transparent to the layer behind
-  let col = lo.rgb * loVis + hi.rgb * hiVis * (1.0 - lo.a);
-  let hidden = lo.a * loVis + hi.a * hiVis * (1.0 - lo.a);
+  let col = lo.rgb + hi.rgb * hiVis * (1.0 - lo.a);
+  let hidden = lo.a + hi.a * hiVis * (1.0 - lo.a);
   return vec4f(col, hidden);
 }
 
@@ -428,16 +537,86 @@ fn moonDisk(dir: vec3f) -> vec3f {
   return vec3f(1.0, 0.97, 0.92) * rad * edge * maria * sampleTrans(camR(), max(dir.y, 0.0));
 }
 
-fn skyRadiance(dirIn: vec3f, withSun: bool, pixAng: f32) -> vec3f {
+fn skyRadiance(dirIn: vec3f, withSun: bool, pixAng: f32, lo: vec4f) -> vec3f {
   var dir = dirIn;
   dir.y = max(dir.y, 0.0005);
   dir = normalize(dir);
   var L = skyAtmo(dir);
   var sunT = 1.0;
-  let cl = cloudLayers(dir, pixAng, vec2f(-1.0), &sunT);
+  let cl = cloudLayers(dir, pixAng, vec2f(-1.0), lo, &sunT);
   L = L * (1.0 - cl.a) + cl.rgb;
   if (withSun) { L += sunDisk(dir) * sunT; }
   return L;
+}
+`;
+
+// Cached cumulus panorama: u = azimuth, v = sqrt(elevation / 90 deg) (more rows near the
+// horizon, where clouds are small and dense). Requires a 'cloudDome' texture binding.
+export const CLOUD_DOME_SAMPLE = /* wgsl */ `
+const DOME_W: f32 = ${DOME_W}.0;
+const DOME_H: f32 = ${DOME_H}.0;
+fn domeDir(uv: vec2f) -> vec3f {
+  let az = (uv.x - 0.5) * 2.0 * PI;
+  let el = uv.y * uv.y * 0.5 * PI;
+  return vec3f(sin(az) * cos(el), sin(el), -cos(az) * cos(el));
+}
+fn cloudDomeAt(dir: vec3f, smp: sampler) -> vec4f {
+  if (dir.y <= 0.0) { return vec4f(0.0); }
+  let az = atan2(dir.x, -dir.z);
+  let el = asin(clamp(dir.y, 0.0, 1.0));
+  // keep v inside the first/last texel centres: a repeating sampler would wrap it
+  let v = clamp(sqrt(el / (0.5 * PI)), 0.5 / DOME_H, 1.0 - 0.5 / DOME_H);
+  // a small tent filter hides the per-texel jitter grain of the march
+  let uv = vec2f(az / (2.0 * PI) + 0.5, v);
+  let o = vec2f(0.6 / DOME_W, 0.6 / DOME_H);
+  return (textureSampleLevel(cloudDome, smp, uv + vec2f(o.x, o.y), 0.0) + textureSampleLevel(cloudDome, smp, uv + vec2f(-o.x, o.y), 0.0)
+        + textureSampleLevel(cloudDome, smp, uv + vec2f(o.x, -o.y), 0.0) + textureSampleLevel(cloudDome, smp, uv - o, 0.0)) * 0.25;
+}
+`;
+
+// Ray-marches the cumulus into the dome: every frame one row in thirty-two (z = extra phases on
+// the first frames, so the whole dome fills at once).
+export const CLOUD_DOME = FRAME_WGSL + ATMO_CORE_WGSL + /* wgsl */ `
+@group(0) @binding(0) var<uniform> F: Frame;
+@group(0) @binding(1) var transLUT: texture_2d<f32>;
+@group(0) @binding(2) var skyLUT: texture_2d<f32>;
+@group(0) @binding(3) var sampC: sampler;
+@group(0) @binding(4) var dst: texture_storage_2d<rgba16float, write>;
+` + SKY_RENDER_FUNCS + SKY_CLOUD_FUNCS + /* wgsl */ `
+const DOME_W: f32 = ${DOME_W}.0;
+const DOME_H: f32 = ${DOME_H}.0;
+fn domeDir(uv: vec2f) -> vec3f {
+  let az = (uv.x - 0.5) * 2.0 * PI;
+  let el = uv.y * uv.y * 0.5 * PI;
+  return vec3f(sin(az) * cos(el), sin(el), -cos(az) * cos(el));
+}
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  let row = id.y * 32u + (u32(F.cloudMap.w) + id.z) % 32u;
+  if (f32(id.x) >= DOME_W || f32(row) >= DOME_H) { return; }
+  let uv = (vec2f(f32(id.x), f32(row)) + 0.5) / vec2f(DOME_W, DOME_H);
+  let dir = domeDir(uv);
+  // angular texel size sets the noise octave cut-off; a per-texel jitter de-bands the march
+  let pixAng = 2.0 * PI / DOME_W;
+  let jit = f32(pcgHash(id.x * 7919u + row * 104729u) >> 8u) / 16777216.0;
+  textureStore(dst, vec2u(id.x, row), cumulus(dir, pixAng, 18, jit));
+}
+`;
+
+// Cumulus shadow transmittance on the ground around the camera (r channel).
+export const CLOUD_SHADOW = FRAME_WGSL + ATMO_CORE_WGSL + /* wgsl */ `
+@group(0) @binding(0) var<uniform> F: Frame;
+@group(0) @binding(1) var transLUT: texture_2d<f32>;
+@group(0) @binding(2) var skyLUT: texture_2d<f32>;
+@group(0) @binding(3) var sampC: sampler;
+@group(0) @binding(4) var dst: texture_storage_2d<rgba16float, write>;
+` + SKY_RENDER_FUNCS + /* wgsl */ `
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  let n = ${CSHADOW_SIZE}u;
+  if (id.x >= n || id.y >= n) { return; }
+  let xz = F.cloudMap.xy + (vec2f(id.xy) + 0.5) / f32(n) * F.cloudMap.z;
+  textureStore(dst, id.xy, vec4f(cloudShadow(vec3f(xz.x, 0.0, xz.y)), 0.0, 0.0, 1.0));
 }
 `;
 
@@ -447,7 +626,8 @@ export const ENV_CUBE = FRAME_WGSL + ATMO_CORE_WGSL + /* wgsl */ `
 @group(0) @binding(2) var skyLUT: texture_2d<f32>;
 @group(0) @binding(3) var sampC: sampler;
 @group(0) @binding(4) var dst: texture_storage_2d_array<rgba16float, write>;
-` + SKY_RENDER_FUNCS + SKY_CLOUD_FUNCS + /* wgsl */ `
+@group(0) @binding(5) var cloudDome: texture_2d<f32>;
+` + SKY_RENDER_FUNCS + SKY_CLOUD_FUNCS + CLOUD_DOME_SAMPLE + /* wgsl */ `
 const ENV: f32 = ${ENV_SIZE}.0;
 fn faceDir(face: u32, uv: vec2f) -> vec3f {
   let u = uv.x * 2.0 - 1.0;
@@ -469,10 +649,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let dir = normalize(faceDir(face, (vec2f(id.xy) + 0.5) / ENV));
   var L: vec3f;
   if (dir.y >= 0.0) {
-    L = skyRadiance(dir, false, 1.5708 / ENV * 1.5);
+    L = skyRadiance(dir, false, 1.5708 / ENV * 1.5, cloudDomeAt(dir, sampC));
   } else {
     // below the horizon: hazy distant ground / water lit by the sky and the sun
-    let hz = skyRadiance(normalize(vec3f(dir.x, 0.004, dir.z)), false, 1.5708 / ENV * 1.5);
+    let hz = skyRadiance(normalize(vec3f(dir.x, 0.004, dir.z)), false, 1.5708 / ENV * 1.5, vec4f(0.0));
     let ground = vec3f(0.07, 0.07, 0.065) * (sunIlluminance() * max(F.sunDir.y, 0.0) + skyAtmo(vec3f(0.0, 1.0, 0.0)) * 2.0);
     L = mix(hz * 0.8, ground, clamp(-dir.y * 5.0, 0.0, 1.0));
   }
@@ -504,8 +684,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 }
 `;
 
-// Cloud transmittance towards the sun (averaged over the solar disc), used to dim
-// direct sunlight on the water when the sun is behind clouds.
+// High-layer transmittance towards the sun (averaged over the solar disc), used to dim direct
+// sunlight everywhere; the cumulus deck shadows the scene per point (cloudShadow).
 export const SUN_VIS = FRAME_WGSL + ATMO_CORE_WGSL + /* wgsl */ `
 @group(0) @binding(0) var<uniform> F: Frame;
 @group(0) @binding(1) var transLUT: texture_2d<f32>;
@@ -525,7 +705,7 @@ fn main(@builtin(local_invocation_index) k: u32) {
     let a = f32(k) * 0.8975979;
     let o = select(vec2f(cos(a), sin(a)) * 0.65, vec2f(0.0), k == 0u);
     let dir = normalize(sd + (tx * o.x + ty * o.y) * SUN_ANG_R);
-    let cl = cloudLayers(dir, 0.0, vec2f(-1.0), &t);
+    let cl = cloudLayers(dir, 0.0, vec2f(-1.0), vec4f(0.0), &t);
   }
   part[k] = t;
   workgroupBarrier();

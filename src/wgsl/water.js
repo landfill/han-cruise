@@ -130,7 +130,7 @@ fn reflUV(relp: vec3f) -> vec2f {
   let world = vec3f(xz.x, in.height, xz.y);
   let sh = shadowAt(in.rel, vec3f(0.0, 1.0, 0.0));
   let occ = overheadOcclusion(world);
-  let sunE = sunLight() * sh * occ;
+  let sunE = sunLightAt(world) * sh * occ;
 
   // ---- sun glitter ----
   let Hv = normalize(V + Ld);
