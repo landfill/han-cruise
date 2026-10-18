@@ -14,6 +14,7 @@ export const SCENES = {
   night_yeouido: { tod: 'night', s: 3330, view: 'bow', yawToAz: 240, pitch: 2, time: 40, desc: '야간, 여의도 스카이라인과 수면 반사' },
   day_overview: { tod: 'day', s: 900, view: 'port', yaw: -50, pitch: 0, time: 40, desc: '낮, 원효대교 이후 여의도 방향' },
 
+  day_bridge: { tod: 'day', s: 560, view: 'bow', pitch: 6, time: 40, desc: '낮, 원효대교 접근 (교량 위 차량)' },
   debug_top: { tod: 'golden', s: 980, free: { pos: [-200, 350, 900], yaw: 20, pitch: -25 }, time: 40, desc: 'debug overview' },
   debug_boat: { tod: 'golden', s: 980, freeRel: { pos: [-45, 18, -40], yaw: 135, pitch: -14 }, time: 40, desc: 'debug boat' },
 };

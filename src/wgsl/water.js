@@ -173,7 +173,7 @@ fn reflUV(relp: vec3f) -> vec2f {
   // already in the per-pixel reflection direction, which is what stretches lights into streaks
   let sigU = sqrt(max(unres + 0.5 * (aa.x + aa.y), 1e-7));
   let blurW = sigU * 2.0 * D / max(pixW * (D + camToP), 1e-5);
-  let lod = clamp(log2(max(blurW * 0.35, 1.0)), 0.0, F.misc.z - 1.0);
+  let lod = clamp(log2(max(blurW * 0.35, 1.0)), 0.0, min(F.misc.z - 1.0, 2.5));
   var refl = textureSampleLevel(reflTex, sampC, clamp(uv, vec2f(0.001), vec2f(0.999)), lod).rgb;
   // outside the reflection frustum fall back to the env cube
   let inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);

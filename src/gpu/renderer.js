@@ -274,6 +274,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       { binding: 7, visibility: VF, buffer: { type: 'read-only-storage' } },
       { binding: 8, visibility: VF, sampler: { type: 'filtering' } },
       { binding: 9, visibility: VF, texture: { sampleType: 'float' } },
+      { binding: 10, visibility: VF, texture: { sampleType: 'float' } },
     ],
   });
   const sceneBG = (ubo) => device.createBindGroup({
@@ -282,6 +283,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       { binding: 3, resource: sampClamp }, { binding: 4, resource: envCubeView }, { binding: 5, resource: shadowArrView },
       { binding: 6, resource: sampShadow }, { binding: 7, resource: { buffer: sunVisBuf } }, { binding: 8, resource: sampRepeat },
       { binding: 9, resource: occTex.createView() },
+      { binding: 10, resource: sdfTex.createView() },
     ],
   });
   const bgSceneMain = sceneBG(frameUBO), bgSceneRefl = sceneBG(reflUBO);
@@ -362,12 +364,14 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     return { main, refl };
   }
   const P = {};
-  [P.terrain, P.mesh, P.trees, P.sky, P.sprites] = await Promise.all([
+  const vehVB = [meshVB[0], { arrayStride: 32, stepMode: 'instance', attributes: [{ shaderLocation: 5, offset: 0, format: 'float32x4' }, { shaderLocation: 6, offset: 16, format: 'float32x4' }] }];
+  [P.terrain, P.mesh, P.trees, P.sky, P.sprites, P.vehicles] = await Promise.all([
     variants({ label: 'terrain', layout: layout(sceneBGL, terrainBGL), vertex: { module: terrainMod, entryPoint: 'vs', buffers: gridInst }, fragment: { module: terrainMod, entryPoint: 'fs' }, primitive: { topology: 'triangle-list', cullMode: 'none' } }),
     variants({ label: 'mesh', layout: layout(sceneBGL, meshBGL), vertex: { module: meshMod, entryPoint: 'vs', buffers: meshVB }, fragment: { module: meshMod, entryPoint: 'fs' }, primitive: { topology: 'triangle-list', cullMode: 'none' } }),
     variants({ label: 'trees', layout: layout(sceneBGL, treesBGL), vertex: { module: treesMod, entryPoint: 'vs', buffers: treeVB }, fragment: { module: treesMod, entryPoint: 'fs' }, primitive: { topology: 'triangle-list', cullMode: 'none' } }),
     variants({ label: 'sky', layout: layout(sceneBGL), vertex: { module: skyMod, entryPoint: 'vs' }, fragment: { module: skyMod, entryPoint: 'fs' }, primitive: { topology: 'triangle-list' }, depthWrite: false, depthCompare: 'equal' }),
     variants({ label: 'sprites', layout: layout(sceneBGL), vertex: { module: spriteMod, entryPoint: 'vs', buffers: spriteVB }, fragment: { module: spriteMod, entryPoint: 'fs' }, primitive: { topology: 'triangle-strip' }, depthWrite: false, blend: additive }),
+    variants({ label: 'vehicles', layout: layout(sceneBGL, meshBGL), vertex: { module: meshMod, entryPoint: 'vsInst', buffers: vehVB }, fragment: { module: meshMod, entryPoint: 'fs' }, primitive: { topology: 'triangle-list', cullMode: 'none' } }),
   ]);
   // half-resolution sky (clouds are soft; the full-res pass was ~3 ms) + composite into the main pass
   P.skyHalf = await device.createRenderPipelineAsync({
@@ -433,6 +437,11 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   const boatVB = upload(geom.boat.mesh.vertices, U.VERTEX, 'boat vertices');
   const boatIB = upload(geom.boat.mesh.indices, U.INDEX, 'boat indices');
   const boatCount = geom.boat.mesh.icount;
+  // traffic: car / bus templates + per-frame instance buffers
+  const vehicleKinds = ['car', 'bus'].map((k) => ({
+    vb: upload(geom[k].vertices, U.VERTEX, k), ib: upload(geom[k].indices, U.INDEX, k), count: geom[k].icount,
+    inst: buf(4096 * 32, U.VERTEX | U.COPY_DST, k + ' instances'), n: 0,
+  }));
   log(`static meshes: ${meshes.length} tiles, ${(tris / 1e6).toFixed(2)} M triangles`);
 
   // trees
@@ -802,6 +811,15 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     }
     return n;
   }
+  function drawVehicles(rp, pipe) {
+    rp.setPipeline(pipe);
+    rp.setBindGroup(1, bgMesh, [0]);
+    for (const k of vehicleKinds) {
+      if (!k.n) continue;
+      rp.setVertexBuffer(0, k.vb); rp.setVertexBuffer(1, k.inst); rp.setIndexBuffer(k.ib, 'uint32');
+      rp.drawIndexed(k.count, k.n);
+    }
+  }
   function drawTrees(rp, pl, nPlanes, camPos, maxDist) {
     rp.setVertexBuffer(0, treeVBuf);
     rp.setVertexBuffer(1, treeInstBuf);
@@ -861,6 +879,13 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     probeUArr[24] = env.current[0]; probeUArr[25] = env.current[1]; probeUArr[26] = time;
     device.queue.writeBuffer(probeUBO, 0, probeUArr);
 
+    // traffic bodies
+    if (state.vehicles) {
+      const v = state.vehicles;
+      vehicleKinds[0].n = Math.min(4096, v.carCount); vehicleKinds[1].n = Math.min(4096, v.busCount);
+      if (vehicleKinds[0].n) device.queue.writeBuffer(vehicleKinds[0].inst, 0, v.cars, 0, vehicleKinds[0].n * 8);
+      if (vehicleKinds[1].n) device.queue.writeBuffer(vehicleKinds[1].inst, 0, v.buses, 0, vehicleKinds[1].n * 8);
+    }
     // dynamic light sprites
     dynSpriteCount = Math.min(MAX_DYN, dynLights.count);
     if (dynSpriteCount) device.queue.writeBuffer(dynSpriteBuf, 0, dynLights.data, 0, dynSpriteCount * 8);
@@ -925,6 +950,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       }
       rp.setPipeline(P.mesh.refl);
       drawMeshes(rp, planes, np, false, false, 2500, cam.pos);
+      drawVehicles(rp, P.vehicles.refl);
       rp.setPipeline(P.trees.refl); rp.setBindGroup(1, bgTrees);
       drawTrees(rp, planes, np, cam.pos, Math.min(Q.treeDist, 1200));
       rp.setPipeline(P.sky.refl); rp.draw(3);
@@ -963,6 +989,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
         rp.setVertexBuffer(0, landInst); rp.setIndexBuffer(gridIdx, 'uint16');
         rp.drawIndexed(GRID * GRID * 6, stats.landNodes);
       }
+      if (!skip.meshes) drawVehicles(rp, P.vehicles.main);
       rp.setPipeline(P.trees.main); rp.setBindGroup(1, bgTrees);
       if (!skip.trees) drawTrees(rp, planes, np, cam.pos, Q.treeDist);
       if (stats.waterNodes && !skip.water) {

@@ -49,6 +49,25 @@ export const MESH = LIGHTING_WGSL + MESH_IO + /* wgsl */ `
   return o;
 }
 
+// Instanced variant (traffic): per-instance position + heading (cw from north) and body colour.
+@vertex fn vsInst(v: VIn, @location(5) inst: vec4f, @location(6) tint: vec4f) -> VSOut {
+  var o: VSOut;
+  let c = cos(inst.w); let s = sin(inst.w);
+  // local: x right, z backwards (forward = -z)
+  let p = vec3f(c * v.pos.x - s * v.pos.z, v.pos.y, s * v.pos.x + c * v.pos.z);
+  let nn = vec3f(c * v.nrm.x - s * v.nrm.z, v.nrm.y, s * v.nrm.x + c * v.nrm.z);
+  o.world = inst.xyz + p;
+  o.rel = o.world - F.camPos.xyz;
+  o.nrm = nn;
+  // vertex colour alpha 0 marks body panels that take the instance paint colour
+  o.col = vec4f(select(v.col.rgb, tint.rgb, v.col.a < 0.5), 1.0);
+  o.mat = v.mat;
+  o.aux = v.aux;
+  o.lpos = v.pos;
+  o.pos = F.viewProj * vec4f(o.rel, 1.0);
+  return o;
+}
+
 fn h2(a: f32, b: f32, seed: u32) -> f32 {
   return hashU(u32(i32(a) + 100000) * 7919u + seed, u32(i32(b) + 100000));
 }
@@ -112,17 +131,25 @@ fn facade(u: f32, v: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, kind: u32,
   f.f0 = mix(vec3f(0.035), glassF0, win);
   f.metal = 0.0;
 
-  // lit windows at night: per-window random, warm residential / cool office, some flicker-free variety
-  let litFrac = F.night.w * select(0.55, 0.85, kind == 2u || kind == 3u);
-  let lit = step(cellR, litFrac) * step(0.6, v) * hasWin;
-  let warm = select(vec3f(1.0, 0.86, 0.66), vec3f(1.0, 0.72, 0.42), kind == 2u || kind == 3u);
+  // lit windows at night. Offices light up in clusters (a lit floor section of several bays),
+  // homes per window; the cluster pattern stays readable at a distance, and only beyond that is
+  // replaced by its average so distant facades do not sparkle.
+  let isHome = kind == 2u || kind == 3u;
+  let litFrac = F.night.w * select(0.6, 0.9, isHome);
+  let clusterW = select(5.0, 1.0, isHome);
+  let ccell = vec2f(floor(cu / clusterW), floor(cv));
+  let cR = h2(ccell.x, ccell.y, seed + 7u);
+  let wR = select(cellR * 0.5, cellR, isHome);   // some unlit windows inside lit office clusters
+  let lit = step(cR, litFrac) * step(wR, 0.85) * step(0.6, v) * hasWin;
+  let warm = select(vec3f(1.0, 0.86, 0.66), vec3f(1.0, 0.72, 0.42), isHome);
   let cool = vec3f(0.85, 0.92, 1.0);
-  let tone = select(warm, cool, h2(cell.x + 17.0, cell.y, seed) > select(0.7, 0.92, kind == 2u));
-  let bright = 0.5 + 0.8 * h2(cell.x, cell.y + 31.0, seed);
+  let tone = select(warm, cool, h2(ccell.x + 17.0, ccell.y, seed) > select(0.6, 0.92, isHome));
+  let bright = 0.45 + 0.8 * h2(ccell.x, ccell.y + 31.0, seed);
   let one = tone * bright * lit;
-  let avg = mix(warm, cool, 0.3) * litFrac * 0.9;
-  let far = smoothstep(0.35, 1.1, max(fw.x, fw.y));
-  f.emit = mix(one * win, avg * dutyX * dutyY * hasWin, far) * F.night.y * 0.010;
+  // seen edge-on or from far away, recessed windows are partly hidden by the wall depth
+  let avg = mix(warm, cool, 0.3) * litFrac * 0.85 * 0.3;
+  let far = smoothstep(0.5, 1.4, max(fw.x * clusterW, fw.y) / clusterW * select(1.0, 1.0, isHome) + max(fw.x, fw.y) * 0.25);
+  f.emit = mix(one * win, avg * dutyX * dutyY * hasWin, far) * F.night.y * 0.009;
   return f;
 }
 

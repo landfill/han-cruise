@@ -125,10 +125,11 @@ function piersFor(mb, fr, br) {
       // V-shaped pier in elevation (Wonhyo): two legs spreading along the axis
       mb.material(MAT.CONCRETE, CONCRETE, 0.85);
       // caisson cap at the waterline (elliptical, cutwater shaped)
-      capsule(mb, fr, s, 0, footY, 1.6, 6.5, br.deckW * 0.3);
+      // caisson cap from below the water up to the springing of the legs (+2.2 m)
+      capsule(mb, fr, s, 0, footY, 2.2 - footY, 7.5, br.deckW * 0.5);
       const legW = br.deckW * 0.42;
       for (const dir of [-1, 1]) {
-        const a = fr.P(s + dir * 1.0, 0, 1.6), b = fr.P(s + dir * 7.5, 0, top + 0.2);
+        const a = fr.P(s + dir * 0.9, 0, 1.6), b = fr.P(s + dir * 7.5, 0, top + 0.2);
         mb.beam(a, b, 1.9, legW, fr.n);
       }
       continue;

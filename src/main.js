@@ -5,6 +5,7 @@ import { buildBoat, BOAT } from './scene/boat.js';
 import { buildLandmarks } from './scene/landmarks.js';
 import { buildTreeTemplate } from './scene/trees.js';
 import { buildPiers } from './scene/piers.js';
+import { buildCarTemplate, buildBusTemplate, CAR_COLOURS, BUS_COLOURS } from './scene/vehicles.js';
 import { createRenderer, QUALITY } from './gpu/renderer.js';
 import { boatMatrix, transformPoint, D2R, clamp } from './gpu/math.js';
 import { Path, Boat } from './sim/route.js';
@@ -114,6 +115,7 @@ async function load() {
       landmarks: buildLandmarks(data.meta.landmarks),
       misc: buildPiers(data.meta.piers),
       treeTemplate: buildTreeTemplate(),
+      car: buildCarTemplate(), bus: buildBusTemplate(),
     };
     const tGeom = performance.now();
     setProgress(0.8, '셰이더 준비 중');
@@ -226,6 +228,7 @@ function start() {
   if (shotMode) state.tod = shotMode.tod;
   state.sound = $('soundStart').checked && !qs.has('mute') && !shotMode;
   env = makeEnv(state.tod, shotMode?.env || {});
+  if (qs.get('env')) for (const kv of qs.get('env').split(',')) { const [k, v] = kv.split(':'); env[k] = Number(v); }
   if (qs.get('skip')) env.skip = Object.fromEntries(qs.get('skip').split(',').map((k) => [k, true]));
   $('start').hidden = true;
   $('hud').hidden = !!(shotMode && qs.get('ui') !== '1');
@@ -348,10 +351,11 @@ function renderSize() {
   return [Math.max(320, Math.round(cw * s)), Math.max(180, Math.round(ch * s))];
 }
 
-function frame(now, warmup = false) {
+function frame(now, warmup = false, dtOverride = 0) {
   let dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (shotMode || qs.has('fixeddt')) dt = 1 / 60;
+  if (dtOverride) dt = dtOverride;
   frames++;
   fps.acc += dt; fps.n++; fps.t += dt;
   fps.frameMs.push(dt * 1000); if (fps.frameMs.length > 240) fps.frameMs.shift();
@@ -390,7 +394,8 @@ function frame(now, warmup = false) {
     boatLightsW[i] = p[0]; boatLightsW[i + 1] = p[1]; boatLightsW[i + 2] = p[2];
     for (let k = 3; k < 8; k++) boatLightsW[i + k] = bl[i + k];
   }
-  const dynCount = env.lights > 0.001 ? traffic.update(dt, boatLightsW) : 0;
+  const dynCount = traffic.update(dt, boatLightsW, env.lights > 0.001);
+  traffic.bodies(cam.pos, 1800, CAR_COLOURS, BUS_COLOURS);
 
   advancePassTimes();
   wakeU += (boat.v - wakeU) * Math.min(1, dt / 6);   // the wake pattern adapts to speed changes over seconds
@@ -401,6 +406,7 @@ function frame(now, warmup = false) {
   renderer.render({
     cam, env, time: simTime, dt, boatMatrix: boatM, width: w, height: h, probe,
     dynLights: { data: traffic.data, count: dynCount }, resetExposure, passTimes,
+    vehicles: { cars: traffic.cars, carCount: traffic.carCount, buses: traffic.buses, busCount: traffic.busCount },
   });
   resetExposure = false;
 
@@ -471,9 +477,10 @@ function updateHUD(cam) {
   }
 }
 
+const MANUAL = qs.has('manual');   // frames are stepped by tools/record.mjs
 function loop(now) {
   requestAnimationFrame(loop);
-  if (!renderer || !state.started) { last = now; return; }
+  if (!renderer || !state.started || MANUAL) { last = now; return; }
   frame(now);
 }
 
@@ -492,6 +499,20 @@ window.__app = {
     return btoa(s);
   },
   stats: () => ({ ...renderer.stats, waterHeight: Array.from(renderer.stats.waterHeight), exposure: Array.from(renderer.stats.exposure), fps: fps.value, frameMs: fps.frameMs.slice(), errors: renderer.errors.slice(), boat: { s: boat.s, v: boat.v, x: boat.x, z: boat.z, heading: boat.heading }, load: window.__loadTimes, log: logLines.slice(-30) }),
+  // render one frame with a fixed dt and return it as a JPEG (base64)
+  stepJpeg: async (dt, quality = 0.9) => {
+    const p = renderer.capture();
+    frame(performance.now(), false, dt);
+    const img = await p;
+    const c = new OffscreenCanvas(img.width, img.height);
+    c.getContext('2d').putImageData(img, 0, 0);
+    const buf = new Uint8Array(await (await c.convertToBlob({ type: 'image/jpeg', quality })).arrayBuffer());
+    let s = '';
+    for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return btoa(s);
+  },
+  step: (dt) => frame(performance.now(), false, dt),
+  hud: () => ({ section: document.getElementById('sectionName').textContent, caption: document.getElementById('caption').hidden ? '' : document.getElementById('capName').textContent }),
   setBoat: (s) => { boat.place(s); resetPassTimes(boat.s, boat.v); },
   setSpeed: (k) => { state.speed = k; },
   setPaused: (p) => { state.paused = p; },

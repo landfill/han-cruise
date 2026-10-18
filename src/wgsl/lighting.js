@@ -15,6 +15,7 @@ export const SCENE_BINDINGS = /* wgsl */ `
 @group(0) @binding(7) var<storage, read> sunVis: array<f32, 4>;
 @group(0) @binding(8) var sampR: sampler;
 @group(0) @binding(9) var occTex: texture_2d<f32>;
+@group(0) @binding(10) var sceneSdf: texture_2d<f32>;
 `;
 
 export const LIGHTING_WGSL = FRAME_WGSL + ATMO_CORE_WGSL + SCENE_BINDINGS + SKY_RENDER_FUNCS + /* wgsl */ `
@@ -88,7 +89,11 @@ fn skyDiffuse(n: vec3f) -> vec3f {
 // Diffuse light from the city itself at night (street lamps, windows), warm and weak
 // Street lamps light the lowest few storeys; above that only a faint glow from the city remains.
 fn cityAmbient(n: vec3f, world: vec3f) -> vec3f {
-  let low = 1.0 - smoothstep(3.0, 25.0, world.y);
+  // street lighting reaches structures on and near the banks, not the middle of the river
+  let uv = (world.xz - F.sdfP.xy) / F.sdfP.zw;
+  var dBank = 100.0;
+  if (all(uv > vec2f(0.0)) && all(uv < vec2f(1.0))) { dBank = textureSampleLevel(sceneSdf, sampC, uv, 0.0).r; }
+  let low = (1.0 - smoothstep(3.0, 25.0, world.y)) * smoothstep(-60.0, 5.0, dBank);
   return vec3f(1.0, 0.76, 0.52) * F.night.y * (0.00006 + 0.0005 * low) * (0.6 + 0.4 * max(-n.y, 0.0) + 0.3 * (1.0 - abs(n.y)));
 }
 

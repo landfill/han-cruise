@@ -99,6 +99,8 @@ export class Boat {
     // approach: decelerate to a stop at the end (v^2 = 2 a d)
     const dEnd = L - s;
     v = Math.min(v, Math.sqrt(Math.max(0, 2 * this.accel * 0.6 * (dEnd - 3))));
+    // berthing: dead slow over the last ~150 m (about 1 m/s at 20 m out)
+    v = Math.min(v, 0.45 + Math.max(0, dEnd - 3) * 0.028);
     return v;
   }
   // Sets the boat at arc length s in steady state (used for reproducible captures).

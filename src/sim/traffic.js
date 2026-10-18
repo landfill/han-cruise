@@ -16,14 +16,36 @@ export class Traffic {
       const lane = { pts, cum, L, cars: [] };
       const vmax = l.speed || 16;
       // spacing 30-90 m (moderate evening traffic)
-      for (let s = rnd() * 40; s < L; s += 30 + rnd() * 60) lane.cars.push({ s, v: vmax * (0.8 + 0.3 * rnd()) });
+      for (let s = rnd() * 40; s < L; s += 30 + rnd() * 60) {
+        const bus = rnd() < 0.06;
+        lane.cars.push({ s, v: vmax * (bus ? 0.75 : 0.8 + 0.3 * rnd()), bus, colour: Math.floor(rnd() * 1000) });
+      }
       this.lanes.push(lane);
     }
     this.count = this.lanes.reduce((n, l) => n + l.cars.length, 0);
     this.data = new Float32Array(Math.max(1, this.count * 2 + 64) * 8);
+    // instance data for car bodies near the camera: x, y, z, yaw, r, g, b, 1
+    this.cars = new Float32Array(Math.max(1, this.count) * 8);
+    this.buses = new Float32Array(Math.max(1, this.count) * 8);
+    this.carCount = 0; this.busCount = 0;
+  }
+  bodies(cam, maxDist, carCols, busCols) {
+    let nc = 0, nb = 0;
+    const md2 = maxDist * maxDist;
+    for (const lane of this.lanes) for (const c of lane.cars) {
+      if (c.x === undefined) continue;
+      const dx = c.x - cam[0], dz = c.z - cam[2];
+      if (dx * dx + dz * dz > md2) continue;
+      const arr = c.bus ? this.buses : this.cars;
+      const o = (c.bus ? nb++ : nc++) * 8;
+      const col = c.bus ? busCols[c.colour % busCols.length] : carCols[c.colour % carCols.length];
+      arr[o] = c.x; arr[o + 1] = c.y; arr[o + 2] = c.z; arr[o + 3] = c.yaw;
+      arr[o + 4] = col[0]; arr[o + 5] = col[1]; arr[o + 6] = col[2]; arr[o + 7] = 1;
+    }
+    this.carCount = nc; this.busCount = nb;
   }
   // writes sprite instances (x,y,z,size, r,g,b,yaw) and returns the count
-  update(dt, extra) {
+  update(dt, extra, lightsOn = true) {
     const d = this.data;
     let n = 0;
     for (const lane of this.lanes) {
@@ -42,6 +64,8 @@ export class Traffic {
         const len = Math.hypot(dx, dz) || 1;
         const yaw = Math.atan2(dx, -dz);
         const fx = dx / len, fz = dz / len;
+        c.x = x; c.y = y; c.z = z; c.yaw = yaw;
+        if (!lightsOn) continue;
         // headlights (front, 2.2 m ahead of the centre)
         let o = n * 8;
         d[o] = x + fx * 2.2; d[o + 1] = y + 0.7; d[o + 2] = z + fz * 2.2; d[o + 3] = 0.22;
