@@ -1,0 +1,19 @@
+// Fixed, reproducible verification scenes: position along the route (s, metres), viewpoint,
+// look direction (yaw relative to the bow, or yawToAz = absolute compass azimuth), time of day
+// and simulation time. Used with ?scene=<key> and by tools/capture.mjs.
+export const SCENES = {
+  golden_sun: { tod: 'golden', s: 3330, view: 'bow', yawToAz: 252, pitch: -3, time: 40, desc: '골든아워, 태양 방향 수면 (여의도 방향 역광)' },
+  golden_city: { tod: 'golden', s: 980, view: 'bow', pitch: -1, time: 40, desc: '골든아워, 태양을 등진 수면과 도시 (한강철교·용산 방면)' },
+  golden_side: { tod: 'golden', s: 1250, view: 'port', yaw: -70, pitch: -2, time: 40, desc: '골든아워, 태양을 옆에 둔 수면과 여의도·63빌딩' },
+  bridge_approach: { tod: 'golden', s: 600, view: 'bow', pitch: 4, time: 40, desc: '원효대교 접근' },
+  bridge_under: { tod: 'golden', s: 728, view: 'bow', pitch: 30, time: 40, desc: '원효대교 아래 통과' },
+  rail_approach: { tod: 'day', s: 1640, view: 'bow', pitch: 3, time: 40, desc: '한강철교 접근 (낮)' },
+  near_hull: { tod: 'day', s: 1150, view: 'starboard', yaw: 75, pitch: -32, time: 40, desc: '난간·선체·수면 근경 (낮)' },
+  stern_wake: { tod: 'day', s: 1300, view: 'stern', pitch: -12, time: 40, desc: '선미 항적 (낮)' },
+  night_rail: { tod: 'night', s: 1560, view: 'bow', pitch: 2, time: 40, desc: '야간, 한강철교와 도시 조명 반사' },
+  night_yeouido: { tod: 'night', s: 3330, view: 'bow', yawToAz: 240, pitch: 2, time: 40, desc: '야간, 여의도 스카이라인과 수면 반사' },
+  day_overview: { tod: 'day', s: 900, view: 'port', yaw: -50, pitch: 0, time: 40, desc: '낮, 원효대교 이후 여의도 방향' },
+
+  debug_top: { tod: 'golden', s: 980, free: { pos: [-200, 350, 900], yaw: 20, pitch: -25 }, time: 40, desc: 'debug overview' },
+  debug_boat: { tod: 'golden', s: 980, freeRel: { pos: [-45, 18, -40], yaw: 135, pitch: -14 }, time: 40, desc: 'debug boat' },
+};

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>한강 유람선</title>
+<meta name="description" content="서울 한강 유람선 갑판에서 여의도·원효대교·한강철교를 실시간 3D로 관람합니다 (WebGPU).">
+<link rel="stylesheet" href="/src/ui/style.css">
+</head>
+<body>
+<canvas id="c" aria-label="한강 유람선 3D 장면" tabindex="0"></canvas>
+
+<!-- start / loading -->
+<section id="start" class="screen" aria-labelledby="title">
+  <div class="card">
+    <p class="eyebrow">서울 · 한강</p>
+    <h1 id="title">한강 유람선</h1>
+    <p class="lede">여의도 선착장을 떠나 원효대교와 한강철교 아래를 지나고, 노들섬 앞에서 돌아오는 약 4.2km의 항로입니다.</p>
+    <fieldset class="seg" id="todStart">
+      <legend>시간대</legend>
+      <label><input type="radio" name="tod" value="day"> <span>낮</span></label>
+      <label><input type="radio" name="tod" value="golden" checked> <span>골든아워</span></label>
+      <label><input type="radio" name="tod" value="night"> <span>야간</span></label>
+    </fieldset>
+    <label class="check"><input type="checkbox" id="soundStart" checked> <span>소리 켜기</span></label>
+    <div class="progress" role="progressbar" aria-labelledby="loadText" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="loadBar"></div></div>
+    <p id="loadText" class="small" aria-live="polite">준비 중…</p>
+    <button id="startBtn" class="primary" disabled>항해 시작</button>
+    <div id="loadError" class="error" hidden>
+      <p id="loadErrorText"></p>
+      <button id="retryBtn">다시 시도</button>
+    </div>
+    <p class="fine">실제 지형·교량 위치(OpenStreetMap)를 바탕으로 만든 시연 항로이며, 실제 운항 상품의 일정·항로와 다를 수 있습니다.</p>
+  </div>
+</section>
+
+<!-- WebGPU unsupported -->
+<section id="unsupported" class="screen" hidden aria-labelledby="unsTitle">
+  <div class="card">
+    <h1 id="unsTitle">이 브라우저에서는 실행할 수 없습니다</h1>
+    <p id="unsReason" class="lede"></p>
+    <p>이 앱은 <strong>WebGPU</strong>로만 렌더링하며, 다른 렌더러(WebGL 등)는 제공하지 않습니다.</p>
+    <ul>
+      <li>데스크톱 Chrome 또는 Edge 최신 버전(113 이상)에서 열어 주세요.</li>
+      <li>Safari 26 이상 등 다른 WebGPU 지원 브라우저에서도 열릴 수 있지만, 검증한 환경은 Chrome뿐입니다.</li>
+      <li>하드웨어 가속이 꺼져 있으면 브라우저 설정에서 켜 주세요.</li>
+    </ul>
+    <p class="fine">검증 환경: Apple M4(10코어 GPU) · Chrome 155 · 1920×1080.</p>
+  </div>
+</section>
+
+<!-- voyage HUD -->
+<div id="hud" hidden>
+  <div id="topbar">
+    <div id="section" aria-live="polite"><span id="sectionName">여의도 선착장</span> <span id="eta" class="small"></span></div>
+    <div id="routeBar" aria-hidden="true"><div id="routeFill"></div></div>
+  </div>
+  <div id="caption" hidden aria-live="polite"><strong id="capName"></strong><p id="capText"></p></div>
+  <div id="toolbar" role="toolbar" aria-label="항해 조작">
+    <button id="playBtn" aria-label="일시정지" title="일시정지 / 재개 (Space)"><span class="ico">❚❚</span><span class="lbl">일시정지</span></button>
+    <div class="group" role="group" aria-label="시점">
+      <button data-view="bow" aria-pressed="true" title="1">선수</button>
+      <button data-view="port" title="2">좌현</button>
+      <button data-view="starboard" title="3">우현</button>
+      <button data-view="stern" title="4">선미</button>
+      <button data-view="foredeck" title="5">하갑판</button>
+    </div>
+    <div class="group" role="group" aria-label="시간대">
+      <button data-tod="day">낮</button>
+      <button data-tod="golden">골든아워</button>
+      <button data-tod="night">야간</button>
+    </div>
+    <button id="soundBtn" aria-pressed="true" title="소리 (M)">소리 켬</button>
+    <button id="infoBtn" aria-pressed="true" title="해설 (I)">해설</button>
+    <button id="speedBtn" title="재생 속도">1×</button>
+    <button id="moreBtn" aria-expanded="false" aria-controls="settings" title="설정">설정</button>
+  </div>
+  <div id="settings" hidden>
+    <label>화질
+      <select id="qualitySel"><option value="auto">자동</option><option value="high">높음</option><option value="medium">보통</option><option value="low">낮음</option></select>
+    </label>
+    <label class="check"><input type="checkbox" id="reducedChk"> <span>모션 줄이기</span></label>
+    <p class="small">드래그 또는 방향키로 둘러보기 · 휠로 확대 · 1–5 시점 · Space 일시정지 · M 소리 · I 해설</p>
+    <p class="small" id="perfLine"></p>
+    <p class="fine">지도 © OpenStreetMap 기여자(ODbL) · 고도 AWS Terrain Tiles · 수면·대기 기술 web-ocean(MIT)</p>
+  </div>
+  <div id="ended" hidden role="dialog" aria-labelledby="endTitle">
+    <h2 id="endTitle">항해를 마쳤습니다</h2>
+    <p>여의도 선착장에 돌아왔습니다.</p>
+    <button id="againBtn" class="primary">다시 항해</button>
+  </div>
+</div>
+<div id="fade" aria-hidden="true"></div>
+<div id="devStats" hidden></div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
