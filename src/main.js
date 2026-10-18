@@ -43,7 +43,7 @@ const state = {
 // WebGPU availability
 // ---------------------------------------------------------------------------------------------
 async function initGPU() {
-  if (!('gpu' in navigator)) return { error: '이 브라우저는 WebGPU를 지원하지 않습니다.' };
+  if (!navigator.gpu) return { error: '이 브라우저는 WebGPU를 지원하지 않습니다.' };
   let adapter;
   try { adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }); } catch (e) { adapter = null; }
   if (!adapter) return { error: 'WebGPU 어댑터를 찾지 못했습니다. 하드웨어 가속이 꺼져 있거나 GPU가 지원 목록에 없을 수 있습니다.' };
@@ -271,7 +271,9 @@ function toggleSound() {
   syncUI();
 }
 function syncUI() {
-  $('playBtn').querySelector('.ico').textContent = state.paused ? '▶' : '❚❚';
+  $('playBtn').querySelector('.ico').innerHTML = state.paused
+    ? '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1l9 5-9 5z" fill="currentColor"/></svg>'
+    : '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="1" width="3" height="10" fill="currentColor"/><rect x="7" y="1" width="3" height="10" fill="currentColor"/></svg>';
   $('playBtn').querySelector('.lbl').textContent = state.paused ? '재개' : '일시정지';
   $('playBtn').setAttribute('aria-label', state.paused ? '재개' : '일시정지');
   for (const b of document.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', String(!state.free && b.dataset.view === deckCam?.key));
@@ -390,6 +392,9 @@ function frame(now, warmup = false, dtOverride = 0) {
     if (kx || ky) deckCam.look(kx * 60 * dt, ky * 40 * dt);
     cam = deckCam.update(dt, boatM, boat, state.reduced);
   }
+  // portrait screens: keep at least ~60 degrees of horizontal view
+  const aspect = canvas.width / canvas.height;
+  if (aspect < 1.1) cam.fovY = Math.min(1.75, Math.max(cam.fovY, 2 * Math.atan(Math.tan(31 * D2R) / aspect)));
   lastCam = cam;
 
   // boat lights to world
@@ -464,7 +469,9 @@ function updateHUD(cam) {
       const dy = lm.height * 0.5 - cam.pos[1];
       const L = Math.hypot(dx, dy, dz);
       const c = (dx * cam.fwd[0] + dy * cam.fwd[1] + dz * cam.fwd[2]) / L;
-      if (c < Math.cos(28 * D2R)) continue;
+      // must be inside the horizontal field of view (with a margin)
+      const halfX = Math.min(28 * D2R, Math.atan(Math.tan(cam.fovY / 2) * canvas.width / canvas.height) * 0.85);
+      if (c < Math.cos(halfX)) continue;
       const score = c * (1.5 - d / lm.range);
       if (score > bestScore) { bestScore = score; best = lm; }
     }
@@ -529,6 +536,7 @@ window.__app = {
   pathLength: () => path.length,
   sections: () => sections,
   clickStart: () => start(),
+  audio: () => ({ state: audio?.ctx?.state || 'none', on: !!audio?.on, level: audio ? audio.level() : 0 }),
 };
 
 requestAnimationFrame(loop);

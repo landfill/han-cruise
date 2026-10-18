@@ -60,7 +60,7 @@ while (n < total) {
 fs.closeSync(fd);
 await browser.close();
 const code = await new Promise((r) => spawn(ff, ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-c:v', 'mjpeg', '-framerate', String(fps), '-i', mjpeg,
-  '-c:v', 'libvpx-vp9', '-b:v', W >= 1920 ? '9M' : '5M', '-deadline', 'good', '-cpu-used', '4', '-row-mt', '1', out], { stdio: 'inherit' }).on('close', r));
+  '-c:v', 'libvpx-vp9', '-b:v', W >= 1920 ? '4M' : '2M', '-deadline', 'good', '-cpu-used', '4', '-row-mt', '1', out], { stdio: 'inherit' }).on('close', r));
 if (code) { console.error('ffmpeg failed', code); process.exit(1); }
 fs.unlinkSync(mjpeg);
 const meta = { out, frames: n, seconds: n / fps, wallSeconds: (Date.now() - t0) / 1000, tod, speed, W, H, gpuMs: { mean: gpu.reduce((a, b) => a + b, 0) / Math.max(1, gpu.length), max: Math.max(...gpu) }, consoleErrors: logs, timeline };

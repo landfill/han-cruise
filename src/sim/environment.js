@@ -40,7 +40,8 @@ export function makeEnv(presetKey, overrides = {}) {
     shadows: e > -1,
     ambient: 1.0,
     exposure: 1.0, exposureKey: p.key, exposureMin: 0.02, exposureMax: p.exMax,
-    bloom: 0.018, saturation: 1.0, contrast: 1.0,
+    // a little more glare around point lights at night (camera / eye), very little by day
+    bloom: 0.018 + 0.03 * smoothstep(2, -8, e), saturation: 1.0, contrast: 1.0,
     debug: 0,
     boat: { x: 0, z: 0, heading: 0, v: 0, yawRate: 0 },
   };

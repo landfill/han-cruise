@@ -107,6 +107,16 @@ export class CruiseAudio {
     this.deck.connect(this.verbSend);
   }
 
+  // RMS level of the mix (for automated checks)
+  level() {
+    if (!this.ctx) return 0;
+    if (!this.analyser) { this.analyser = this.ctx.createAnalyser(); this.analyser.fftSize = 2048; this.master.connect(this.analyser); this.buf = new Float32Array(2048); }
+    this.analyser.getFloatTimeDomainData(this.buf);
+    let s = 0;
+    for (const v of this.buf) s += v * v;
+    return Math.sqrt(s / this.buf.length);
+  }
+
   update(dt, s) {
     if (!this.ctx || !this.on) return;
     this.t += dt;

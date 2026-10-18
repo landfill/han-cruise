@@ -230,7 +230,9 @@ fn skyViewUV(dir: vec3f) -> vec2f {
 fn skyGlow(dir: vec3f) -> vec3f {
   let e = max(dir.y, 0.0);
   let band = exp(-e / 0.10) * 0.75 + exp(-e / 0.45) * 0.25;
-  return vec3f(1.0, 0.72, 0.48) * (band * 0.85 + 0.15) * F.night.z;
+  // sodium/LED orange near the horizon, a cooler grey-blue overhead (moonlit, less aerosol)
+  let tint = mix(vec3f(0.42, 0.48, 0.66), vec3f(1.0, 0.72, 0.48), smoothstep(0.0, 0.6, band));
+  return tint * (band * 0.85 + 0.15) * F.night.z;
 }
 fn skyAtmo(dir: vec3f) -> vec3f {
   return textureSampleLevel(skyLUT, sampC, skyViewUV(dir), 0.0).rgb * F.sunDir.w + skyGlow(dir);

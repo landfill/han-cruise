@@ -851,7 +851,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
 
     // boat object transform + bounds (for culling)
     for (let i = 0; i < 16; i++) objF[i] = boatMatrix[i];
-    objF[16] = 0.0012;
+    objF[16] = 0.0006;
     device.queue.writeBuffer(objUBO, 256, objF);
     const bx = boatMatrix[12], by = boatMatrix[13], bz = boatMatrix[14];
     boatBounds.min = [bx - 30, by - 3, bz - 30]; boatBounds.max = [bx + 30, by + 15, bz + 30];
