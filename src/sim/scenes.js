@@ -22,6 +22,10 @@ export const SCENES = {
   debug_ichon: { tod: 'golden', s: 1250, view: 'port', yaw: -70, pitch: 2, time: 40, fov: 14, desc: 'debug: Ichon apartments zoomed' },
   debug_ichon_day: { tod: 'day', s: 1100, view: 'port', yaw: -95, pitch: 3, time: 40, fov: 18, desc: 'debug: Ichon gables zoomed (day)' },
   debug_ifc: { tod: 'day', s: 3300, view: 'bow', yawToAz: 255, pitch: 8, time: 40, fov: 20, desc: 'debug: IFC / Parc.1 zoomed' },
+  debug_nodeul: { tod: 'day', s: 1960, view: 'bow', lookAt: [1050, 760], pitch: 2, time: 40, fov: 40, desc: 'debug: Nodeul island from the turn' },
+  debug_bank: { tod: 'day', s: 1100, view: 'port', yaw: -90, pitch: -4, time: 40, fov: 35, desc: 'debug: Ichon bank close-up' },
+  debug_ybank: { tod: 'day', s: 3500, view: 'port', yaw: -90, pitch: -4, time: 40, fov: 35, desc: 'debug: Yeouido bank close-up' },
+  perf_depart: { tod: 'golden', s: 70, view: 'bow', pitch: 0, time: 40, desc: 'perf: just after departure (bank and pier close)' },
   debug_top: { tod: 'golden', s: 980, free: { pos: [-200, 350, 900], yaw: 20, pitch: -25 }, time: 40, desc: 'debug overview' },
   debug_boat: { tod: 'golden', s: 980, freeRel: { pos: [-45, 18, -40], yaw: 135, pitch: -14 }, time: 40, desc: 'debug boat' },
 };

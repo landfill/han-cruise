@@ -28,7 +28,7 @@ export function parseBuildings(buffer) {
   const n = dv.getInt32(o, true); o += 4;
   const out = [];
   for (let k = 0; k < n; k++) {
-    const h = dv.getFloat32(o + 8, true), base = dv.getFloat32(o + 12, true), minH = dv.getFloat32(o + 16, true), floorH = dv.getFloat32(o + 20, true);
+    const no = dv.getFloat32(o, true), h = dv.getFloat32(o + 8, true), base = dv.getFloat32(o + 12, true), minH = dv.getFloat32(o + 16, true), floorH = dv.getFloat32(o + 20, true);
     o += 24;
     const seed = dv.getUint32(o, true); o += 4;
     const mat = MATS[dv.getUint8(o)], nr = dv.getUint8(o + 1), flags = dv.getUint16(o + 2, true); o += 4;
@@ -39,7 +39,7 @@ export function parseBuildings(buffer) {
       for (let i = 0; i < np; i++) { pts[i * 2] = dv.getFloat32(o, true); pts[i * 2 + 1] = dv.getFloat32(o + 4, true); o += 8; }
       rings.push({ inner, pts });
     }
-    out.push({ h, base, minH, floorH, seed, mat, rings, estimated: !!(flags & 1), landmark: !!(flags & 2) });
+    out.push({ no, h, base, minH, floorH, seed, mat, rings, estimated: !!(flags & 1), landmark: !!(flags & 2) });
   }
   return out;
 }
@@ -52,8 +52,9 @@ function ringArea(p) {
 }
 const pick = (arr, seed) => arr[seed % arr.length];
 const WALL = { WINDOWS: 255, BACK: 170, GABLE_NO: 85, BLANK: 0 };
-// gable block number ("101동"): 4 glyphs of 1 unit wide with 0.45 gaps, 1.6 units tall
-const GABLE_TEXT_W = 4 + 3 * 0.45;
+// gable block number ("101동"): glyphs 1 unit wide with 0.45 gaps, 1.6 units tall. The number
+// comes from OSM where tagged; otherwise the shader makes up a three-digit one.
+const gableTextW = (no) => { const g = (no ? String(no).length : 3) + 1; return g + (g - 1) * 0.45; };
 
 function principal(p) {
   const n = p.length / 2;
@@ -168,20 +169,20 @@ export function buildBuildingMeshes(list) {
         let yMid = Math.max(ta, tb);
         let unit = 0;
         if (blank && !r.inner && edgeLen > 8 && y1 - y0 > 25) {
-          unit = Math.min(2.4, edgeLen * 0.78 / GABLE_TEXT_W);
+          unit = Math.min(2.4, edgeLen * 0.78 / gableTextW(b.no));
           yMid = y1 - 1.6 * unit - 3.0;
         }
         const v0 = mb.vertex(ax, y0, az, nx, 0, nz), v1 = mb.vertex(bx, y0, bz, nx, 0, nz);
         const v2 = mb.vertex(bx, unit ? yMid : tb, bz, nx, 0, nz), v3 = mb.vertex(ax, unit ? yMid : ta, az, nx, 0, nz);
         mb.tri(v0, v1, v2); mb.tri(v0, v2, v3);
         if (unit) {
-          // number band: aux = (band base, glyph unit), normal.w = horizontal text coordinate
+          // number band: aux = (band base, glyph unit + 10 * block number), normal.w = horizontal text coordinate
           // (glyph units from the wall centre, along the viewer's right, /8 to fit snorm8)
           const nl = Math.hypot(nx, nz), rx = nz / nl, rz = -nx / nl;
           const mx = (ax + bx) / 2, mz = (az + bz) / 2;
           const tc = (x, z) => Math.round(((x - mx) * rx + (z - mz) * rz) / unit / 8 * 127);
           mb.col[3] = WALL.GABLE_NO;
-          mb.setAux(yMid, unit);
+          mb.setAux(yMid, unit + 10 * b.no);
           const w0 = mb.vertex(ax, yMid, az, nx, 0, nz), w1 = mb.vertex(bx, yMid, bz, nx, 0, nz);
           const w2 = mb.vertex(bx, y1, bz, nx, 0, nz), w3 = mb.vertex(ax, y1, az, nx, 0, nz);
           for (const [vi, x, z] of [[w0, ax, az], [w1, bx, bz], [w2, bx, bz], [w3, ax, az]]) mb.i8[vi * 32 + 15] = tc(x, z);

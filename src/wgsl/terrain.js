@@ -85,12 +85,17 @@ fn landClass(xz: vec2f) -> u32 {
   let xz = in.world.xz;
   let n = normalize(in.nrm);
   let d = sdfAt(xz);
+  // stair coordinate for stepped revetments (derivative taken in uniform control flow)
+  let stepK = in.world.y / 0.4;
+  let fwStep = fwidth(stepK);
   let cls = landClass(xz);
 
   // ---- material ----
   let det = textureSample(detailTex, sampR, xz * 0.21).r;   // fine detail (1/0.21 m tiles)
   let det2 = textureSample(detailTex, sampR, xz * 0.031).b;  // broad variation
   let rock = textureSample(detailTex, sampR, xz * 0.55).g;
+  // mip level of the stone texture, for lookups inside the (non-uniform) revetment branch
+  let rockLod = log2(max(length(fwidth(xz * 0.55)) * 512.0, 1.0));
   var alb = vec3f(0.30, 0.29, 0.27);   // urban default (paving, roofs below the building mesh)
   var rough = 0.85;
   if (cls == 1u) { alb = mix(vec3f(0.11, 0.17, 0.06), vec3f(0.19, 0.21, 0.09), det2) * (0.85 + 0.3 * det); rough = 0.95; }
@@ -100,11 +105,36 @@ fn landClass(xz: vec2f) -> u32 {
   else if (cls == 5u) { alb = vec3f(0.22, 0.19, 0.17) * (0.8 + 0.3 * det); }
   else if (cls == 6u) { alb = vec3f(0.38, 0.30, 0.26) * (0.9 + 0.15 * det); rough = 0.8; } // red cycle path
   else if (cls == 7u) { alb = vec3f(0.36, 0.35, 0.33) * (0.88 + 0.2 * det); rough = 0.8; }
-  // riprap revetment and the wet band at the waterline
+  // Revetment (the 30-degree band between the water and the promenade). Two kinds alternate
+  // along the river in stretches of a few hundred metres: grey riprap with weeds between the
+  // stones, and stepped concrete terraces (0.4 m rise, 0.7 m tread - the same slope). Which
+  // stretch gets which is procedural, not mapped.
+  var nn = n;
   if (d < 5.5 && d > -6.0) {
-    let stone = vec3f(0.30, 0.29, 0.27) * (0.55 + 0.6 * rock);
-    alb = mix(alb, stone, 1.0 - smoothstep(4.5, 5.5, d));
-    rough = mix(rough, 0.7, 1.0 - smoothstep(4.5, 5.5, d));
+    let band = 1.0 - smoothstep(4.6, 5.4, d);
+    let stepped = smoothstep(0.52, 0.56, textureSampleLevel(detailTex, sampR, xz * 0.0011, 0.0).b);
+    // riprap: dark grey stones, bumpy, weeds and dry grass in the joints higher up
+    let rg = vec2f(textureSampleLevel(detailTex, sampR, (xz + vec2f(0.25, 0.0)) * 0.55, rockLod).g - rock,
+                   textureSampleLevel(detailTex, sampR, (xz + vec2f(0.0, 0.25)) * 0.55, rockLod).g - rock);
+    var stone = vec3f(0.20, 0.195, 0.18) * (0.5 + 0.7 * rock);
+    let weeds = smoothstep(0.55, 0.75, det2 + 0.25 * det) * smoothstep(0.8, 1.6, in.world.y) * (1.0 - rock * 0.8);
+    stone = mix(stone, mix(vec3f(0.07, 0.10, 0.04), vec3f(0.20, 0.18, 0.10), det), weeds);
+    let nRip = normalize(n + vec3f(-rg.x, 0.0, -rg.y) * 1.6 * (1.0 - stepped));
+    // steps: treads face up, risers face the water
+    let riser = 1.0 - filteredPulse(stepK, 0.64, fwStep);
+    let hd = normalize(n.xz + vec2f(1e-4, 0.0));
+    let nStep = normalize(mix(vec3f(0.0, 1.0, 0.0), vec3f(hd.x, 0.15, hd.y), riser));
+    let conc = vec3f(0.29, 0.285, 0.27) * (0.85 + 0.25 * det) * mix(1.0, 0.8, riser) * (0.9 + 0.2 * det2);
+    // flood silt and moss on the lowest steps, patchy grime higher up
+    let moss = (1.0 - smoothstep(0.6, 1.5, in.world.y)) * (0.6 + 0.4 * det2);
+    let conc2 = mix(conc * mix(1.0, 0.7, smoothstep(0.55, 0.8, det2)), vec3f(0.10, 0.11, 0.07), moss);
+    let rev = mix(stone, conc2, stepped);
+    alb = mix(alb, rev, band);
+    rough = mix(rough, mix(0.75, 0.85, stepped), band);
+    nn = normalize(mix(n, mix(nRip, nStep, stepped), band));
+    // concrete kerb along the top edge of the revetment
+    let kerb = smoothstep(4.55, 4.7, d) * (1.0 - smoothstep(5.05, 5.2, d));
+    alb = mix(alb, vec3f(0.46, 0.45, 0.42) * (0.9 + 0.15 * det), kerb);
     // wet/stained band just above the water (water level fluctuates ~0.5 m)
     let wet = 1.0 - smoothstep(0.0, 0.55, in.world.y);
     alb *= mix(1.0, 0.45, wet);
@@ -119,7 +149,7 @@ fn landClass(xz: vec2f) -> u32 {
   s.albedo = alb; s.rough = rough; s.metal = 0.0; s.f0 = vec3f(0.035); s.emit = vec3f(0.0); s.ao = 1.0;
   // street/park light pools on paths and roads at night
   if (cls == 3u || cls == 6u || cls == 7u) { s.emit = alb * vec3f(1.0, 0.75, 0.5) * F.night.y * 0.006; }
-  var col = shade(s, n, in.rel, in.world);
+  var col = shade(s, nn, in.rel, in.world);
   col = applyFog(col, in.rel);
   return vec4f(col, select(1.0, length(in.rel), isReflPass()));
 }

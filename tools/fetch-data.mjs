@@ -34,6 +34,8 @@ const QUERIES = {
   landuse: `[out:json][timeout:180];(way["leisure"="park"](${CORRIDOR});rel["leisure"="park"](${CORRIDOR});way["landuse"~"grass|forest|recreation_ground"](${CORRIDOR});way["natural"~"wood|scrub|sand|beach"](${CORRIDOR});rel["natural"="wood"](${CORRIDOR}););out geom;`,
   roads: `[out:json][timeout:180];(way["highway"~"motorway|trunk|primary|secondary|motorway_link|trunk_link"](${CORRIDOR});way["railway"~"rail|subway"](${CORRIDOR});way["highway"~"cycleway|footway|path"]["bicycle"](${CORRIDOR}););out geom;`,
   supports: `[out:json][timeout:120];(nwr["bridge:support"](${CORRIDOR});nwr["man_made"="bridge"]["bridge:structure"](${CORRIDOR}););out geom;`,
+  // riverside park facilities (points): kiosks, toilets, shelters, cafes, bicycle rental
+  facilities: `[out:json][timeout:120];(node["amenity"~"toilets|shelter|cafe|fast_food|restaurant|bicycle_rental|drinking_water"](${CORRIDOR});node["shop"="convenience"](${CORRIDOR}););out;`,
   piers: `[out:json][timeout:120];(way["man_made"="pier"](${CORRIDOR});nwr["amenity"="ferry_terminal"](${CORRIDOR});way["man_made"~"breakwater|embankment|dyke"](${CORRIDOR});way["natural"="tree_row"](${CORRIDOR}););out geom;`,
 };
 

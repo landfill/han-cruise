@@ -524,12 +524,22 @@ const LANDMARKS = {
   681805210: { key: 'fki', name: 'FKI 타워', mat: 'glassDark' },
 };
 const DUPLICATE_OF = { 463384209: 64989671 }; // "63스퀘어" outline duplicates the 63 Building way
+// Untagged footprints whose shape heuristics give nonsense: the Nodeul island cultural complex
+// (2019) is two to three storeys stepped into the island (heights estimated from photographs;
+// the long footprint was otherwise read as a 17-storey apartment slab).
+const HEIGHT_OVERRIDES = { 813097034: 12, 813097036: 8, 813097037: 9 };
+// Apartment block numbers painted on the gables: OSM names like "101", "101동", "제3동"
+function blockNumber(t) {
+  const m = /^제?\s*(\d{1,4})\s*동?$/.exec(String(t.name || t['addr:block'] || '').trim());
+  return m ? Number(m[1]) : 0;
+}
 function num(v) { const n = parseFloat(String(v || '').replace(',', '.')); return Number.isFinite(n) ? n : null; }
 function ringArea(r) { let s = 0; for (let k = 0; k < r.length; k++) { const a = r[k], b = r[(k + 1) % r.length]; s += a[0] * b[1] - b[0] * a[1]; } return s / 2; }
 function hash32(n) { n = (n ^ 61) ^ (n >>> 16); n = Math.imul(n, 9); n ^= n >>> 4; n = Math.imul(n, 0x27d4eb2d); n ^= n >>> 15; return n >>> 0; }
 
 const seen = new Set();
 const blds = [];
+const floatingTerminals = [];
 let estimated = 0;
 for (const f of ['buildings_wide', 'buildings_corridor', 'landmarks']) {
   for (const e of load(f)) {
@@ -557,6 +567,7 @@ for (const f of ['buildings_wide', 'buildings_corridor', 'landmarks']) {
     const kind = t.building;
     let floorH = ['apartments', 'residential', 'house', 'detached', 'dormitory'].includes(kind) ? 2.9 : 3.8;
     if (h === null && lv !== null) h = lv * floorH + 1.5;
+    if (h === null && HEIGHT_OVERRIDES[e.id]) { h = HEIGHT_OVERRIDES[e.id]; estimated++; }
     if (h === null) {
       estimated++;
       // footprint heuristics for untagged buildings (documented as estimates)
@@ -576,7 +587,9 @@ for (const f of ['buildings_wide', 'buildings_corridor', 'landmarks']) {
       const c0 = outer[0].pts.reduce((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]).map((v) => v / outer[0].pts.length);
       if (sdfAt(c0[0], c0[1]) < 0) {
         if (t.man_made === 'pier') continue;
-        if (isEst) h = 7.5;
+        // untagged floating buildings are terminals (e.g. the Hangang Bus pier): drawn as a
+        // pontoon with a terminal building, see src/scene/piers.js
+        if (isEst) { floatingTerminals.push(outer[0].pts); continue; }
       }
     }
     const minH = num(t.min_height) || 0;
@@ -592,12 +605,42 @@ for (const f of ['buildings_wide', 'buildings_corridor', 'landmarks']) {
     else if (h > 70 || (['commercial', 'office'].includes(kind) && h > 40)) mat = (seed & 3) === 0 ? 'glassDark' : (seed & 3) === 1 ? 'glassBlue' : 'office';
     else if (kind === 'house' || kind === 'detached') mat = 'house';
     else mat = 'office';
-    blds.push({ id: e.id, rings, h: Math.max(h, 3), minH, base, mat, floorH, seed, est: isEst, lm: lm?.key || null });
+    blds.push({ id: e.id, rings, h: Math.max(h, 3), minH, base, mat, floorH, seed, est: isEst, lm: lm?.key || null, no: ['apartments', 'residential', 'dormitory'].includes(kind) ? blockNumber(t) : 0 });
   }
+}
+// riverside park facilities that OSM has only as points (toilets, kiosks, cafes): small
+// one-storey pavilions aligned with the bank, unless a mapped footprint is already there
+{
+  const near = new Set();
+  const cellKey = (x, z) => Math.floor(x / 20) + ',' + Math.floor(z / 20);
+  for (const b of blds) for (const p of b.rings[0].pts) near.add(cellKey(p[0], p[1]));
+  let added = 0;
+  for (const e of load('facilities')) {
+    const t = e.tags || {};
+    const kind = t.shop === 'convenience' ? 'kiosk' : t.amenity === 'toilets' ? 'toilets' : ['cafe', 'fast_food', 'restaurant'].includes(t.amenity) ? 'kiosk' : null;
+    if (!kind) continue;
+    const [x, z] = toXZ(e.lat, e.lon);
+    const d = sdfAt(x, z);
+    if (!(d > 6 && d < 160) || near.has(cellKey(x, z))) continue;
+    // along-bank direction from the SDF gradient
+    const gx = sdfAt(x + 2, z) - sdfAt(x - 2, z), gz = sdfAt(x, z + 2) - sdfAt(x, z - 2);
+    const gl = Math.hypot(gx, gz) || 1;
+    const ux = -gz / gl, uz = gx / gl, wx = gx / gl, wz = gz / gl;
+    const [hl, hw] = kind === 'toilets' ? [6, 3.5] : [5, 3];
+    const pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, c]) => [x + ux * hl * a + wx * hw * c, z + uz * hl * a + wz * hw * c]);
+    let base = Infinity;
+    for (const p of pts) base = Math.min(base, landH(p[0], p[1]));
+    if (!Number.isFinite(base)) continue;
+    const id = e.id;
+    blds.push({ id, rings: [{ role: 'outer', pts }], h: kind === 'toilets' ? 3.6 : 3.4, minH: 0, base: Math.max(base, 2.6) - 0.2, mat: 'office', floorH: 3.4, seed: hash32(id), est: true, lm: null, no: 0 });
+    near.add(cellKey(x, z));
+    added++;
+  }
+  console.log(`facility pavilions: ${added}`);
 }
 console.log(`buildings: ${blds.length} (${estimated} with estimated height)`);
 
-// pack: header int32 count, then per building: f32[x0,z0,h,base,minH,floorH], u32 seed, u8 mat, u8 nRings, u16 pad,
+// pack: header int32 count, then per building: f32[blockNo,0,h,base,minH,floorH], u32 seed, u8 mat, u8 nRings, u16 pad,
 // per ring: u16 nPts, u16 inner flag, f32 pts...
 const MATS = ['office', 'residential', 'house', 'glassBlue', 'glassDark', 'gold', 'parc1'];
 const parts = [];
@@ -610,7 +653,7 @@ const bb = Buffer.alloc(bytes);
 let o = 0;
 bb.writeInt32LE(blds.length, o); o += 4;
 for (const b of blds) {
-  for (const v of [0, 0, b.h, b.base, b.minH, b.floorH]) { bb.writeFloatLE(v, o); o += 4; }
+  for (const v of [b.no, 0, b.h, b.base, b.minH, b.floorH]) { bb.writeFloatLE(v, o); o += 4; }
   bb.writeUInt32LE(b.seed, o); o += 4;
   bb.writeUInt8(MATS.indexOf(b.mat), o); bb.writeUInt8(b.rings.length, o + 1); bb.writeUInt16LE((b.est ? 1 : 0) | (b.lm ? 2 : 0), o + 2); o += 4;
   for (const r of b.rings) {
@@ -767,6 +810,11 @@ for (const e of load('piers')) {
   const [cx, cz] = g.pts.reduce((s, p) => [s[0] + p[0], s[1] + p[1]], [0, 0]).map((v) => v / g.pts.length);
   if (Math.hypot(cx, cz) > 4500) continue;
   scene.piers.push({ name: t.name || '', floating: t.floating === 'yes', building: !!t.building, pts: g.pts.map(([x, z]) => [+x.toFixed(2), +z.toFixed(2)]) });
+}
+for (const pts of floatingTerminals) {
+  const [cx, cz] = pts.reduce((s, p) => [s[0] + p[0], s[1] + p[1]], [0, 0]).map((v) => v / pts.length);
+  if (Math.hypot(cx, cz) > 4500) continue;
+  scene.piers.push({ name: '', floating: true, building: true, pts: pts.map(([x, z]) => [+x.toFixed(2), +z.toFixed(2)]) });
 }
 
 // ---- landmarks (named, for captions and special geometry) -------------------------------

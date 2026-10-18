@@ -154,7 +154,7 @@ fn facade(u: f32, v: f32, wy: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, k
   let stain = dtex(vec2f(u * 0.04, wy * 0.012), 1.0, dist).r;
   let patchv = dtex(vec2f(u * 0.01, wy * 0.006), 1.0, dist).b;
   var wall = wallCol * (0.86 + 0.22 * patchv) * mix(1.0, 0.82, smoothstep(0.5, 0.75, stain));
-  if (kind == 2u && !balcony) {
+  if (kind == 2u && wt == 2u) {
     // horizontal slab lines on the corridor side
     let slab = filteredPulse(cv + 0.06, 0.12, fw.y);
     wall = mix(wall, wall * 0.75, slab);
@@ -246,12 +246,18 @@ fn segDist(p: vec2f, s: vec4f) -> f32 {
   let t = clamp(dot(p - a, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
   return length(p - a - ba * t);
 }
+fn digitCount(num: u32) -> u32 { return select(select(select(1u, 2u, num >= 10u), 3u, num >= 100u), 4u, num >= 1000u); }
 // distance (glyph units) to the strokes of "<number>동" laid out from x = 0
 fn blockNumberDist(p: vec2f, num: u32) -> f32 {
-  let k = clamp(i32(floor(p.x / 1.45)), 0, 3);
+  let nd = digitCount(num);
+  let k = u32(clamp(i32(floor(p.x / 1.45)), 0, i32(nd)));
   let q = vec2f(p.x - f32(k) * 1.45, p.y);
   var g = 10u;
-  if (k == 0) { g = num / 100u; } else if (k == 1) { g = (num / 10u) % 10u; } else if (k == 2) { g = num % 10u; }
+  if (k < nd) {
+    var div = 1u;
+    for (var i = k + 1u; i < nd; i++) { div *= 10u; }
+    g = (num / div) % 10u;
+  }
   var d = 1e3;
   var segs = GLYPH_SEGS;
   var starts = GLYPH_START;
@@ -299,18 +305,22 @@ fn concrete(world: vec3f, n: vec3f, base: vec3f, dist: f32) -> vec3f {
     if (isWall) {
       let t3 = vec3f(tw.x, 0.0, tw.y);
       let l = F.sunDir.xyz;
-      let f = facade(fu, fv, in.world.y, fwu, fwv, max(in.aux.y, 2.5), seed, id, in.col.rgb, wt, vec3f(dot(l, t3), l.y, dot(l, n)), dist);
+      let f = facade(fu, fv, in.world.y, fwu, fwv, select(max(in.aux.y, 2.5), 2.9, wt == 1u), seed, id, in.col.rgb, wt, vec3f(dot(l, t3), l.y, dot(l, n)), dist);
       s.albedo = f.alb; s.rough = f.rough; s.f0 = f.f0; s.metal = f.metal; s.emit = f.emit; s.sunOcc = f.sunOcc;
       n = normalize(n + t3 * f.tilt.x + vec3f(0.0, f.tilt.y, 0.0));
       // contact darkening at the base
       s.ao = f.ao * select(mix(0.55, 1.0, smoothstep(0.0, 5.0, in.world.y - in.aux.x)), 1.0, wt == 1u);
       if (wt == 1u) {
-        // gable band: the painted block number (aux.y = glyph unit in metres, text starts 1 m up)
-        let p = vec2f(in.tx * 8.0 + 2.675, (fv - 1.0) / in.aux.y);
-        let num = 101u + (in.mat.w % 3u) * 100u + (in.mat.w / 3u) % 14u;
+        // gable band: the painted block number (aux.y = glyph unit in metres + 10 x the OSM block
+        // number, 0 = unknown; text starts 1 m up)
+        let osmNo = u32(floor(in.aux.y / 10.0));
+        let unit = in.aux.y - f32(osmNo) * 10.0;
+        let num = select(101u + (in.mat.w % 3u) * 100u + (in.mat.w / 3u) % 14u, osmNo, osmNo > 0u);
+        let textW = f32(digitCount(num) + 1u) * 1.45 - 0.45;
+        let p = vec2f(in.tx * 8.0 + textW * 0.5, (fv - 1.0) / unit);
         let d = blockNumberDist(p, num);
-        let aa = max(fwTx, fwv / in.aux.y) * 0.7 + 1e-4;
-        let ink = (1.0 - smoothstep(0.12 - aa, 0.12 + aa, d)) * step(-0.3, p.x) * step(p.x, 5.65);
+        let aa = max(fwTx, fwv / unit) * 0.7 + 1e-4;
+        let ink = (1.0 - smoothstep(0.12 - aa, 0.12 + aa, d)) * step(-0.3, p.x) * step(p.x, textW + 0.3);
         let inks = array<vec3f, 4>(vec3f(0.10, 0.11, 0.13), vec3f(0.42, 0.07, 0.05), vec3f(0.08, 0.16, 0.34), vec3f(0.10, 0.27, 0.16));
         s.albedo = mix(s.albedo, inks[(in.mat.w / 47u) % 4u], ink);
       }

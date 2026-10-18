@@ -41,13 +41,24 @@ export function buildPiers(piers) {
     // pontoon hull (dark steel) + deck
     extrude(mb, pts, -0.6, 0.9, MAT.DECK, MAT.STEEL, [0.2, 0.22, 0.24], [0.42, 0.42, 0.4]);
     if (p.building) {
-      // two-storey terminal building on the pontoon, glazed ground floor
-      const b = inset(pts, 2.5);
+      // Two-storey floating terminal: glazed volumes between white floor slabs, the upper floor
+      // set back behind a roof terrace with a railing (massing approximated from photographs).
+      const white = [0.82, 0.82, 0.8];
       mb.setAux(0.9, 3.6);
-      extrude(mb, b, 0.9, 8.4, MAT.ROOF, MAT.CURTAIN, [0.62, 0.66, 0.7], [0.5, 0.5, 0.5]);
+      extrude(mb, inset(pts, 3.0), 0.9, 4.4, MAT.ROOF, MAT.CURTAIN, [0.34, 0.42, 0.48], white);
       mb.setAux(0, 0);
-      // railing posts around the pontoon edge
+      extrude(mb, inset(pts, 2.2), 4.4, 5.0, MAT.CONCRETE, MAT.CONCRETE, white, white);
+      mb.setAux(5.0, 3.2);
+      extrude(mb, inset(pts, 5.5), 5.0, 8.2, MAT.ROOF, MAT.CURTAIN, [0.30, 0.38, 0.44], white);
+      mb.setAux(0, 0);
+      extrude(mb, inset(pts, 4.6), 8.2, 8.7, MAT.CONCRETE, MAT.CONCRETE, white, [0.5, 0.5, 0.5]);
+      // terrace railing on the lower slab, and railing posts around the pontoon edge
       mb.material(MAT.STEEL, [0.7, 0.72, 0.74], 0.3, 0.9);
+      const t = inset(pts, 2.4);
+      for (let i = 0; i < t.length; i++) {
+        const a = t[i], c = t[(i + 1) % t.length];
+        mb.tube([a[0], 6.05, a[1]], [c[0], 6.05, c[1]], 0.04, 5);
+      }
       for (let i = 0; i < pts.length; i++) {
         const a = pts[i], c = pts[(i + 1) % pts.length];
         mb.tube([a[0], 1.95, a[1]], [c[0], 1.95, c[1]], 0.03, 5);
