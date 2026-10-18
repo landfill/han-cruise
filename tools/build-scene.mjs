@@ -410,7 +410,7 @@ for (const e of load('roads')) {
 // ---- bridges --------------------------------------------------------------------------------
 // Structural types and spans: see docs/VERIFICATION.md for sources and which values are estimates.
 const BRIDGE_SPECS = {
-  875036745: { key: 'wonhyo', name: '원효대교', type: 'boxgirder', deckW: 20, span: 100, deckTop: 15.5, depthPier: 5.5, depthMid: 2.6, pier: 'v' },
+  875036745: { key: 'wonhyo', name: '원효대교', type: 'boxgirder', deckW: 20, span: 100, deckTop: 15.5, depthPier: 7.0, depthMid: 2.4, pier: 'v' },
   880050989: { key: 'rail_a', name: '한강철교 A선', type: 'truss_warren', deckW: 7, span: 62, deckTop: 11.2, trussH: 8.5 },
   880050990: { key: 'rail_b', name: '한강철교 B선', type: 'truss_warren', deckW: 7, span: 62, deckTop: 11.2, trussH: 8.5 },
   880050987: { key: 'rail_c', name: '한강철교 C선', type: 'truss_cont', deckW: 7.5, span: 62, deckTop: 11.2, trussH: 9.5 },

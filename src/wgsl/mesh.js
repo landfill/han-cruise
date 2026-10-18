@@ -113,7 +113,7 @@ fn facade(u: f32, v: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, kind: u32,
   var glassF0 = vec3f(0.045);
   var glassRough = 0.06;
   if (kind == 4u) { glassTint = wallCol; glassF0 = vec3f(0.07) + wallCol * 0.08; glassRough = 0.05; }
-  if (kind == 5u) { glassTint = vec3f(1.0, 0.8, 0.45); glassF0 = vec3f(0.88, 0.64, 0.30); glassRough = 0.06; }  // gold-coated reflective glass
+  if (kind == 5u) { glassTint = vec3f(1.0, 0.7, 0.3); glassF0 = vec3f(0.95, 0.58, 0.20); glassRough = 0.09; }  // gold-coated reflective glass
   if (kind == 13u) { glassTint = vec3f(0.55, 0.62, 0.65); glassF0 = vec3f(0.08); glassRough = 0.05; }
   // wall / spandrel, with large-scale weathering (rain streaks, patchy repainting)
   let stain = dtex(vec2f(u * 0.04, v * 0.012), 1.0, dist).r;
@@ -125,9 +125,11 @@ fn facade(u: f32, v: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, kind: u32,
     wall = mix(wall, wall * 0.75, slab);
   }
   if (kind == 4u) { wall = vec3f(0.12, 0.13, 0.14); }
-  if (kind == 5u) { wall = vec3f(0.30, 0.23, 0.12); }
+  if (kind == 5u) { wall = vec3f(0.55, 0.38, 0.16); }
   if (kind == 13u) { wall = vec3f(0.55, 0.06, 0.04); }
   f.alb = mix(wall, interior * glassTint, win);
+  // the 63 Building's gold coating also scatters diffusely: it reads gold even against a blue sky
+  if (kind == 5u) { f.alb = mix(wall, vec3f(0.40, 0.21, 0.06), win); }
   f.rough = mix(0.8, glassRough, win);
   f.f0 = mix(vec3f(0.035), glassF0, win);
   f.metal = 0.0;

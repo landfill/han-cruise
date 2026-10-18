@@ -6,6 +6,12 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import { Path } from '../src/sim/route.js';
 import { ROUTE_POINTS } from '../src/sim/routeData.js';
+import { bridgeFrame } from '../src/scene/bridges.js';
+import { buildBoat } from '../src/scene/boat.js';
+
+// highest point of the boat (mast) above the waterline
+const boatGeo = buildBoat();
+const AIR_DRAFT = boatGeo.mesh.max[1];
 
 const meta = JSON.parse(fs.readFileSync('public/data/scene.json', 'utf8'));
 const s = meta.sdf;
@@ -47,8 +53,19 @@ for (const br of meta.bridges) {
     const axisAz = (Math.atan2(ux, -uz) * 180 / Math.PI + 360) % 180;
     let cross = Math.abs(((heading - axisAz) % 180 + 180) % 180);
     const prof = br.profile[Math.round(along / br.profStep)];
-    console.log(`s=${(i * path.step).toFixed(0).padStart(5)}  ${br.name.padEnd(10)} station ${along.toFixed(0)} m, nearest pier ${nearest.toFixed(1)} m, crossing angle ${cross.toFixed(0)} deg, deck ${prof} m`);
-    if (nearest < 18) ok = false;
+    // underside of the structure at the crossing (girder depth for box girders, floor beams for trusses)
+    let depth = 1.4;
+    if (br.type === 'boxgirder' || br.type === 'hangang') {
+      const p = br.piers;
+      let k = 0;
+      while (k < p.length - 2 && p[k + 1] < along) k++;
+      const t = (along - p[k]) / (p[k + 1] - p[k]);
+      depth = br.depthMid + (br.depthPier - br.depthMid) * Math.abs(2 * t - 1) ** 2.6;
+    }
+    const under = bridgeFrame(br).deck(along) - depth;
+    const clear = under - AIR_DRAFT;
+    console.log(`s=${(i * path.step).toFixed(0).padStart(5)}  ${br.name.padEnd(10)} station ${along.toFixed(0)} m, nearest pier ${nearest.toFixed(1)} m, crossing ${cross.toFixed(0)} deg, deck ${prof} m, underside ${under.toFixed(1)} m, clearance over mast ${clear.toFixed(1)} m`);
+    if (nearest < 18 || clear < 1.0) ok = false;
   }
 }
 const proj = meta.projection;

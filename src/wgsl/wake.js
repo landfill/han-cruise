@@ -151,14 +151,15 @@ fn boatWake(xz: vec2f, withSlope: bool) -> WakeOut {
       o.slope = -tg * gx + rt * gy;
     }
   }
-  // turbulent wash aft of the transom and the calm (ripple-damped) stripe it leaves
+  // turbulent wash aft of the transom: dense for a few seconds, then it breaks up into patches
+  // while the calm, ripple-free stripe it leaves lasts much longer
   if (xs > -2.0) {
-    let wdt = B * 0.42 + max(xs, 0.0) * 0.045;
+    let wdt = B * 0.40 + max(xs, 0.0) * 0.04;
     let lat = abs(d);
-    let core = 1.0 - smoothstep(wdt * 0.55, wdt, lat);
+    let core = 1.0 - smoothstep(wdt * 0.45, wdt, lat);
     let sk = smoothstep(0.4, 2.5, U);
-    o.foam = core * exp(-age / 16.0) * smoothstep(-2.0, 1.0, xs) * sk;
-    o.calm = (1.0 - smoothstep(wdt * 0.8, wdt * 1.4, lat)) * exp(-age / 75.0) * smoothstep(-2.0, 2.0, xs) * sk;
+    o.foam = core * (0.75 * exp(-age / 3.5) + 0.25 * exp(-age / 12.0)) * smoothstep(-2.0, 1.0, xs) * sk;
+    o.calm = (1.0 - smoothstep(wdt * 0.8, wdt * 1.5, lat)) * exp(-age / 90.0) * smoothstep(-2.0, 2.0, xs) * sk;
   }
   // bow wave whitening along the forward shoulders at speed
   let bowU = xb;

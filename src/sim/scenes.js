@@ -17,6 +17,8 @@ export const SCENES = {
 
   day_bridge: { tod: 'day', s: 560, view: 'bow', pitch: 6, time: 40, desc: '낮, 원효대교 접근 (교량 위 차량)' },
   depart_bank: { tod: 'golden', s: 150, view: 'stern', yaw: 155, pitch: -4, time: 40, paused: true, desc: '출항 직전, 여의도 강변 근경' },
+  photo_63_rail: { tod: 'day', s: 1500, view: 'starboard', lookAt: [-419, 569], pitch: 5, time: 40, fov: 40, desc: '사진 비교: 한강철교 너머 63빌딩 (낮)' },
+  photo_wonhyo: { tod: 'day', s: 1000, view: 'stern', lookAt: [100, -250], pitch: 2, time: 40, fov: 45, desc: '사진 비교: 원효대교 측면 (낮)' },
   debug_top: { tod: 'golden', s: 980, free: { pos: [-200, 350, 900], yaw: 20, pitch: -25 }, time: 40, desc: 'debug overview' },
   debug_boat: { tod: 'golden', s: 980, freeRel: { pos: [-45, 18, -40], yaw: 135, pitch: -14 }, time: 40, desc: 'debug boat' },
 };

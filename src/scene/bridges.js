@@ -10,7 +10,8 @@ import { MAT } from '../wgsl/mesh.js';
 
 const CONCRETE = [0.56, 0.55, 0.52];
 const CONCRETE_DARK = [0.46, 0.45, 0.43];
-const RAIL_STEEL = [0.38, 0.44, 0.48];
+// Hangang Railway Bridge trusses are painted a light green (checked against photographs)
+const RAIL_STEEL = [0.30, 0.56, 0.42];
 const ARCH_STEEL = [0.78, 0.79, 0.8];
 
 export function bridgeFrame(br) {
@@ -37,7 +38,9 @@ function girderDepth(br, s) {
   const span = p[k + 1] - p[k];
   if (span < 45) return br.depthMid;
   const t = (s - p[k]) / span;
-  return br.depthMid + (br.depthPier - br.depthMid) * (2 * t - 1) ** 2;
+  // haunch: deep over the piers, shallow over most of the span (FCM cantilever profile)
+  const e = Math.abs(2 * t - 1);
+  return br.depthMid + (br.depthPier - br.depthMid) * e ** 2.6;
 }
 
 function sweep(mb, fr, s0, s1, ds, sectionFn) {
@@ -125,12 +128,17 @@ function piersFor(mb, fr, br) {
       // V-shaped pier in elevation (Wonhyo): two legs spreading along the axis
       mb.material(MAT.CONCRETE, CONCRETE, 0.85);
       // caisson cap at the waterline (elliptical, cutwater shaped)
-      // caisson cap from below the water up to the springing of the legs (+2.2 m)
-      capsule(mb, fr, s, 0, footY, 2.2 - footY, 7.5, br.deckW * 0.5);
-      const legW = br.deckW * 0.42;
+      // round caisson (~13 m) just above the water, a short pedestal, then two thick legs
+      // spreading along the bridge axis to the haunched girder (as in photographs of the bridge)
+      const c = fr.P(s, 0, 0);
+      mb.material(MAT.CONCRETE, [0.58, 0.56, 0.52], 0.9);
+      mb.lathe(c[0], footY, c[2], [[6.5, 0], [6.5, 1.5 - footY], [5.8, 1.7 - footY]], 20);
+      mb.material(MAT.CONCRETE, CONCRETE, 0.85);
+      mb.box(fr.P(s, 0, 3.0), fr.u, [0, 1, 0], fr.n, 2.6, 1.4, br.deckW * 0.22);
+      const legW = br.deckW * 0.4;
       for (const dir of [-1, 1]) {
-        const a = fr.P(s + dir * 0.9, 0, 1.6), b = fr.P(s + dir * 7.5, 0, top + 0.2);
-        mb.beam(a, b, 1.9, legW, fr.n);
+        const a = fr.P(s + dir * 1.2, 0, 3.6), b = fr.P(s + dir * 4.6, 0, top + 0.2);
+        mb.beam(a, b, 2.4, legW, fr.n);
       }
       continue;
     }
@@ -257,15 +265,16 @@ function truss(mb, fr, br, continuous) {
     }
     mb.material(MAT.STEEL, RAIL_STEEL, 0.55, 0.15);
   }
-  // masonry / concrete piers with cutwaters
+  // round concrete piers with a cap under each support (as photographed)
   for (const s of piers) {
     const y = fr.deck(s) - 1.0;
     const inWater = s >= w0 - 2 && s <= w1 + 2;
-    mb.material(MAT.CONCRETE, inWater ? [0.52, 0.5, 0.46] : CONCRETE_DARK, 0.9);
     const y0 = inWater ? -1.5 : Math.min(y - 1, 3);
     if (y - y0 < 1) continue;
-    capsule(mb, fr, s, 0, y0, y - y0, 9, br.deckW + 3);
-    mb.material(MAT.STEEL, RAIL_STEEL, 0.55, 0.15);
+    const c = fr.P(s, 0, 0);
+    mb.material(MAT.CONCRETE, inWater ? [0.55, 0.54, 0.5] : CONCRETE_DARK, 0.9);
+    mb.lathe(c[0], y0, c[2], [[2.6, 0], [2.6, y - 0.8 - y0], [3.2, y - 0.6 - y0], [3.2, y - y0]], 16);
+    if (inWater) mb.lathe(c[0], -1.5, c[2], [[3.4, 0], [3.4, 1.2], [2.6, 1.6]], 16);
   }
 }
 

@@ -212,9 +212,10 @@ fn reflUV(relp: vec3f) -> vec2f {
   let pat = textureSample(foamTex, sampR, ax * 0.33 + vec2f(0.013, 0.0) * F.camPos.w).r * 0.75 + textureSample(foamTex, sampR, ax * 0.9).g * 0.25;
   let fw = fwidth(pat) + 0.04;
   if (fo > 0.003) {
-    foamMask = smoothstep(1.0 - fo - fw - 0.12, 1.0 - fo + fw + 0.12, pat) * smoothstep(0.0, 0.35, fo);
+    // ageing wash breaks into lacy patches; only the fresh core is dense
+    foamMask = smoothstep(1.0 - fo - fw - 0.12, 1.0 - fo + fw + 0.12, pat) * smoothstep(0.0, 0.35, fo) * mix(0.55, 0.9, smoothstep(0.5, 0.9, fo));
     // river foam is beige-grey, not ocean white
-    let foamAlb = vec3f(0.62, 0.62, 0.58);
+    let foamAlb = vec3f(0.55, 0.57, 0.52);
     foamLit = foamAlb * (sunE * max(dot(nrm, Ld), 0.0) * 0.32 + skyHemi * 1.4 * occ + cityAmbient(vec3f(0.0, 1.0, 0.0), world) * 3.0);
     // aerated water just under the foam is lighter and greener
     body += vec3f(0.03, 0.05, 0.04) * skyHemi * fo * 1.5;

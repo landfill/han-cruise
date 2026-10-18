@@ -190,8 +190,9 @@ export function buildBoat() {
   // mast with navigation lights near the front of the observation deck, stack aft
   mb.material(MAT.STEEL, RAIL, 0.3, 0.9);
   const mz = top.z0 + 1.6;
-  mb.tube([0, y, mz], [0, y + 4.2, mz], 0.07, 8);
-  mb.tube([0, y + 3.0, mz], [0.9, y + 3.0, mz], 0.03, 4);
+  // short mast: river cruisers keep their air draft low for the bridges (about 8.5 m here)
+  mb.tube([0, y, mz], [0, y + 2.4, mz], 0.07, 8);
+  mb.tube([0, y + 1.9, mz], [0.7, y + 1.9, mz], 0.03, 4);
   mb.material(MAT.HULL, WHITE, 0.35);
   mb.box([0, y + 0.9, top.z1 - 2.2], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.9, 0.9, 0.7);
   mb.material(MAT.STEEL, [0.15, 0.15, 0.16], 0.5, 0.5);
@@ -206,7 +207,7 @@ export function buildBoat() {
   mb.box([2.6, y + 1.1, top.z1 - 5.5], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.9, 1.1, 1.4);
   // lights: masthead (white), sidelights (port red / starboard green), stern (white), deck lamps
   const lights = [
-    0, y + 4.25, mz, 0.12, 1.0, 0.95, 0.85, -10,
+    0, y + 2.45, mz, 0.12, 1.0, 0.95, 0.85, -10,
     -halfBeam(-L / 2 + 14, 2) - 0.1, BOAT.deck2 + 0.3, -L / 2 + 14, 0.1, 1.0, 0.08, 0.04, -10,
     halfBeam(-L / 2 + 14, 2) + 0.1, BOAT.deck2 + 0.3, -L / 2 + 14, 0.1, 0.05, 1.0, 0.3, -10,
     0, BOAT.deck1 + 1.2, L / 2 - 0.2, 0.1, 1.0, 0.95, 0.85, -10,

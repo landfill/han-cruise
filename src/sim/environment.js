@@ -30,7 +30,7 @@ export function makeEnv(presetKey, overrides = {}) {
     // turbid Han River: silt-laden olive green, low clarity
     waterCol: [0.030, 0.040, 0.027], unresolved: 0.0011,
     sssCol: [0.05, 0.075, 0.04], sss: 0.9,
-    wakeFoam: 1.0, wakeGain: 0.16,
+    wakeFoam: 1.0, wakeGain: 0.38,
     haze: p.haze, hazeFloor: 0.9e-4, clouds: p.clouds, veil: p.veil,
     // night: artificial light scale (applies to windows, lamps, traffic), skyglow radiance
     darkness: smoothstep(4, -10, e),
