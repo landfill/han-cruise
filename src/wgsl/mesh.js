@@ -31,6 +31,7 @@ struct VSOut {
   @location(4) @interpolate(flat) mat: vec4u,
   @location(5) aux: vec2f,
   @location(6) lpos: vec3f,
+  @location(7) tx: f32,
 };
 `;
 
@@ -45,6 +46,7 @@ export const MESH = LIGHTING_WGSL + MESH_IO + /* wgsl */ `
   o.mat = v.mat;
   o.aux = v.aux;
   o.lpos = v.pos;
+  o.tx = v.nrm.w;
   o.pos = F.viewProj * vec4f(o.rel, 1.0);
   return o;
 }
@@ -79,50 +81,93 @@ fn dtex(uv: vec2f, scale: f32, dist: f32) -> vec4f {
   return textureSampleLevel(detailTex, sampR, uv * scale, lod);
 }
 
-struct Facade { alb: vec3f, rough: f32, f0: vec3f, metal: f32, emit: vec3f };
+struct Facade { alb: vec3f, rough: f32, f0: vec3f, metal: f32, emit: vec3f, ao: f32, sunOcc: f32, tilt: vec2f };
 
-// Window grid on a vertical wall. u along the wall, v up from the base (metres).
+// Window grid on a vertical wall. u along the wall, v up from the base, wy world height (metres).
 // u, v and their screen derivatives are computed by the caller in uniform control flow.
-fn facade(u: f32, v: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, kind: u32, wallCol: vec3f, hasWin: f32, dist: f32) -> Facade {
+// wt: wall type from the vertex alpha (0 blank / gable, 2 apartment back, 3 windows).
+// sun = sun direction in the wall frame (along u, up, out of the wall).
+fn facade(u: f32, v: f32, wy: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, kind: u32, wallCol: vec3f, wt: u32, sun: vec3f, dist: f32) -> Facade {
   var f: Facade;
+  let hasWin = select(0.0, 1.0, wt >= 2u);
   let s0 = hashU(seed, 11u);
   let s1 = hashU(seed, 12u);
   var bay = 1.5 + s0 * 1.4;
   var dutyX = 0.55 + s1 * 0.25;
   var dutyY = 0.55;
-  if (kind == 2u) { bay = 2.6 + s0 * 1.2; dutyX = 0.62; dutyY = 0.5; }     // apartments: wide balcony windows
-  if (kind == 3u) { bay = 2.2 + s0; dutyX = 0.35; dutyY = 0.42; }          // houses / low-rise
-  if (kind == 4u || kind == 5u || kind == 13u) { bay = 1.5; dutyX = 0.93; dutyY = 0.86; } // curtain walls
+  var depth = 0.3;   // window recess (m)
+  if (kind == 2u) { bay = 2.6 + s0 * 1.2; dutyX = 0.62; dutyY = 0.5; }     // apartments (corridor side): punched windows
+  if (kind == 3u) { bay = 2.2 + s0; dutyX = 0.35; dutyY = 0.42; depth = 0.15; } // houses / low-rise
+  if (kind == 4u || kind == 5u || kind == 13u) { bay = 1.5; dutyX = 0.93; dutyY = 0.86; depth = 0.05; } // curtain walls
   // some offices have continuous ribbon windows
   if (kind == 1u && hashU(seed, 13u) < 0.3) { dutyX = 0.97; dutyY = 0.45; }
+  // Apartment fronts: per unit (7.5-10.5 m between party walls) a solid balcony parapet and a
+  // band of sliding glass recessed behind the slab edge; thin frames divide the glazing.
+  let balcony = kind == 2u && wt == 3u;
+  var winBot = 0.25;
+  if (balcony) { bay = 7.5 + s0 * 3.0; dutyX = 0.94; dutyY = 0.56; winBot = 0.37; depth = 1.3; }
   let cu = u / bay;
   let cv = v / floorH;
   let fw = vec2f(fwu / bay, fwv / floorH);
   // window mask, box-filtered so distant facades average instead of shimmering
   let mx = filteredPulse(cu + 0.5 * (1.0 - dutyX), dutyX, fw.x);
-  let my = filteredPulse(cv - 0.25, dutyY, fw.y);
+  let my = filteredPulse(cv - winBot, dutyY, fw.y);
   var win = mx * my * hasWin;
+  if (balcony) {
+    let panes = 4.0 + floor(s1 * 3.0);
+    win *= mix(1.0, 0.12, 1.0 - filteredPulse(cu * panes + 0.03, 0.94, fw.x * panes));
+  }
   // ground floor (lobbies / shops) a bit taller and more glazed; no windows at the parapet
   win *= step(0.6, v);
+  // recess: the lintel (balcony slab) and the jamb on the sun side shade the glass. Close up the
+  // shadow edge is resolved; once a floor shrinks to a few pixels its average coverage is used.
+  if (sun.z > 0.02) {
+    let fv0 = fract(cv - winBot);
+    let fu0 = fract(cu + 0.5 * (1.0 - dutyX));
+    let shY = depth * max(sun.y, 0.0) / sun.z;
+    let shX = depth * abs(sun.x) / sun.z;
+    let dTop = (dutyY - fv0) * floorH;
+    let dSide = select(fu0, dutyX - fu0, sun.x > 0.0) * bay;
+    let sharp = max(step(dTop, shY), step(dSide, shX));
+    let avg = min(shY / (dutyY * floorH) + shX / (dutyX * bay), 1.0);
+    f.sunOcc = win * mix(sharp, avg, smoothstep(0.15, 0.5, fw.y));
+  }
   let cell = vec2f(floor(cu), floor(cv));
   let cellR = h2(cell.x, cell.y, seed);
   // glass: dark interior + reflection (handled by the caller through f0/rough)
   let blinds = select(0.0, cellR, kind == 1u || kind == 2u);
-  let interior = mix(vec3f(0.018, 0.02, 0.022), vec3f(0.16, 0.15, 0.13), blinds * 0.6 * (1.0 - F.night.x));
+  // apartment curtains are mostly pale (cream, white, light grey)
+  let curtain = select(vec3f(0.16, 0.15, 0.13), vec3f(0.42, 0.39, 0.34), balcony);
+  let interior = mix(vec3f(0.018, 0.02, 0.022), curtain, blinds * 0.6 * (1.0 - F.night.x));
   var glassTint = vec3f(1.0);
   var glassF0 = vec3f(0.045);
   var glassRough = 0.06;
   if (kind == 4u) { glassTint = wallCol; glassF0 = vec3f(0.07) + wallCol * 0.08; glassRough = 0.05; }
   if (kind == 5u) { glassTint = vec3f(1.0, 0.7, 0.3); glassF0 = vec3f(0.95, 0.58, 0.20); glassRough = 0.09; }  // gold-coated reflective glass
   if (kind == 13u) { glassTint = vec3f(0.55, 0.62, 0.65); glassF0 = vec3f(0.08); glassRough = 0.05; }
+  // individual panes are never quite coplanar: tilt each one a little so reflections break up
+  // into a patchwork (fades out once panes are sub-pixel)
+  let tiltFade = 1.0 - smoothstep(0.1, 0.4, max(fw.x, fw.y));
+  f.tilt = (vec2f(h2(cell.x, cell.y, seed + 3u), h2(cell.x, cell.y, seed + 5u)) - 0.5) * 0.035 * win * tiltFade;
+  glassF0 *= 0.9 + 0.2 * cellR;
   // wall / spandrel, with large-scale weathering (rain streaks, patchy repainting)
-  let stain = dtex(vec2f(u * 0.04, v * 0.012), 1.0, dist).r;
-  let patchv = dtex(vec2f(u * 0.01, v * 0.006), 1.0, dist).b;
+  let stain = dtex(vec2f(u * 0.04, wy * 0.012), 1.0, dist).r;
+  let patchv = dtex(vec2f(u * 0.01, wy * 0.006), 1.0, dist).b;
   var wall = wallCol * (0.86 + 0.22 * patchv) * mix(1.0, 0.82, smoothstep(0.5, 0.75, stain));
-  if (kind == 2u) {
-    // horizontal balcony slab lines on apartment blocks
+  if (kind == 2u && !balcony) {
+    // horizontal slab lines on the corridor side
     let slab = filteredPulse(cv + 0.06, 0.12, fw.y);
     wall = mix(wall, wall * 0.75, slab);
+  }
+  if (balcony) {
+    // parapets painted a shade lighter than the party walls; the slab edge a shade darker
+    let party = 1.0 - mx;
+    let edge = filteredPulse(cv + 0.04, 0.07, fw.y);
+    wall = wall * mix(mix(1.08, 0.96, party), 0.8, edge * (1.0 - party));
+    // the recessed glazing band sees less sky
+    f.ao = 1.0 - 0.35 * my * mx;
+  } else {
+    f.ao = 1.0 - 0.2 * win;
   }
   if (kind == 4u) { wall = vec3f(0.12, 0.13, 0.14); }
   if (kind == 5u) { wall = vec3f(0.55, 0.38, 0.16); }
@@ -135,8 +180,8 @@ fn facade(u: f32, v: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, kind: u32,
   f.metal = 0.0;
 
   // lit windows at night. Offices light up in clusters (a lit floor section of several bays),
-  // homes per window; the cluster pattern stays readable at a distance, and only beyond that is
-  // replaced by its average so distant facades do not sparkle.
+  // homes per window (per flat on balcony fronts); the cluster pattern stays readable at a
+  // distance, and only beyond that is replaced by its average so distant facades do not sparkle.
   let isHome = kind == 2u || kind == 3u;
   let litFrac = F.night.w * select(0.6, 0.9, isHome);
   let clusterW = select(5.0, 1.0, isHome);
@@ -147,13 +192,72 @@ fn facade(u: f32, v: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, kind: u32,
   let warm = select(vec3f(1.0, 0.86, 0.66), vec3f(1.0, 0.72, 0.42), isHome);
   let cool = vec3f(0.85, 0.92, 1.0);
   let tone = select(warm, cool, h2(ccell.x + 17.0, ccell.y, seed) > select(0.6, 0.92, isHome));
-  let bright = 0.45 + 0.8 * h2(ccell.x, ccell.y + 31.0, seed);
+  // a curtained balcony window glows dimmer than a bare one
+  let bright = (0.45 + 0.8 * h2(ccell.x, ccell.y + 31.0, seed)) * select(1.0, 0.6, balcony);
   let one = tone * bright * lit;
   // seen edge-on or from far away, recessed windows are partly hidden by the wall depth
-  let avg = mix(warm, cool, 0.3) * litFrac * 0.85 * 0.3;
-  let far = smoothstep(0.5, 1.4, max(fw.x * clusterW, fw.y) / clusterW * select(1.0, 1.0, isHome) + max(fw.x, fw.y) * 0.25);
+  let avg = mix(warm, cool, 0.3) * litFrac * 0.85 * 0.3 * select(1.0, 0.6, balcony);
+  let far = smoothstep(0.5, 1.4, max(fw.x * clusterW, fw.y) / clusterW + max(fw.x, fw.y) * 0.25);
   f.emit = mix(one * win, avg * dutyX * dutyY * hasWin, far) * F.night.y * 0.009;
   return f;
+}
+
+// ---- painted block numbers on apartment gables ("101동") ----
+// A chamfered stroke font: each glyph is a list of segments in a 1 x 1.6 box (y up).
+const GLYPH_SEGS = array<vec4f, 69>(
+  // 0 (8)
+  vec4f(0.25, 0.0, 0.75, 0.0), vec4f(0.75, 0.0, 1.0, 0.25), vec4f(1.0, 0.25, 1.0, 1.35), vec4f(1.0, 1.35, 0.75, 1.6),
+  vec4f(0.75, 1.6, 0.25, 1.6), vec4f(0.25, 1.6, 0.0, 1.35), vec4f(0.0, 1.35, 0.0, 0.25), vec4f(0.0, 0.25, 0.25, 0.0),
+  // 1 (2)
+  vec4f(0.25, 1.3, 0.6, 1.6), vec4f(0.6, 1.6, 0.6, 0.0),
+  // 2 (6)
+  vec4f(0.0, 1.35, 0.25, 1.6), vec4f(0.25, 1.6, 0.75, 1.6), vec4f(0.75, 1.6, 1.0, 1.35), vec4f(1.0, 1.35, 1.0, 1.0),
+  vec4f(1.0, 1.0, 0.0, 0.0), vec4f(0.0, 0.0, 1.0, 0.0),
+  // 3 (8)
+  vec4f(0.0, 1.6, 1.0, 1.6), vec4f(1.0, 1.6, 0.4, 0.95), vec4f(0.4, 0.95, 0.75, 0.95), vec4f(0.75, 0.95, 1.0, 0.7),
+  vec4f(1.0, 0.7, 1.0, 0.25), vec4f(1.0, 0.25, 0.75, 0.0), vec4f(0.75, 0.0, 0.25, 0.0), vec4f(0.25, 0.0, 0.0, 0.25),
+  // 4 (3)
+  vec4f(0.75, 0.0, 0.75, 1.6), vec4f(0.75, 1.6, 0.0, 0.45), vec4f(0.0, 0.45, 1.0, 0.45),
+  // 5 (7)
+  vec4f(1.0, 1.6, 0.05, 1.6), vec4f(0.05, 1.6, 0.0, 0.95), vec4f(0.0, 0.95, 0.75, 0.95), vec4f(0.75, 0.95, 1.0, 0.7),
+  vec4f(1.0, 0.7, 1.0, 0.25), vec4f(1.0, 0.25, 0.75, 0.0), vec4f(0.75, 0.0, 0.0, 0.0),
+  // 6 (9)
+  vec4f(0.9, 1.6, 0.35, 1.6), vec4f(0.35, 1.6, 0.0, 1.25), vec4f(0.0, 1.25, 0.0, 0.25), vec4f(0.0, 0.25, 0.25, 0.0),
+  vec4f(0.25, 0.0, 0.75, 0.0), vec4f(0.75, 0.0, 1.0, 0.25), vec4f(1.0, 0.25, 1.0, 0.7), vec4f(1.0, 0.7, 0.75, 0.95),
+  vec4f(0.75, 0.95, 0.0, 0.95),
+  // 7 (2)
+  vec4f(0.0, 1.6, 1.0, 1.6), vec4f(1.0, 1.6, 0.35, 0.0),
+  // 8 (9)
+  vec4f(0.25, 0.0, 0.75, 0.0), vec4f(0.75, 0.0, 1.0, 0.25), vec4f(1.0, 0.25, 1.0, 1.35), vec4f(1.0, 1.35, 0.75, 1.6),
+  vec4f(0.75, 1.6, 0.25, 1.6), vec4f(0.25, 1.6, 0.0, 1.35), vec4f(0.0, 1.35, 0.0, 0.25), vec4f(0.0, 0.25, 0.25, 0.0),
+  vec4f(0.0, 0.85, 1.0, 0.85),
+  // 9 (9)
+  vec4f(0.1, 0.0, 0.65, 0.0), vec4f(0.65, 0.0, 1.0, 0.35), vec4f(1.0, 0.35, 1.0, 1.35), vec4f(1.0, 1.35, 0.75, 1.6),
+  vec4f(0.75, 1.6, 0.25, 1.6), vec4f(0.25, 1.6, 0.0, 1.35), vec4f(0.0, 1.35, 0.0, 0.9), vec4f(0.0, 0.9, 0.25, 0.65),
+  vec4f(0.25, 0.65, 1.0, 0.65),
+  // 동 (6): ㄷ on top, ㅗ below it; the ㅇ is a circle handled separately
+  vec4f(0.05, 1.6, 0.95, 1.6), vec4f(0.05, 1.6, 0.05, 1.12), vec4f(0.05, 1.12, 0.95, 1.12),
+  vec4f(0.5, 1.12, 0.5, 0.88), vec4f(-0.05, 0.88, 1.05, 0.88), vec4f(0.5, 0.88, 0.5, 0.88),
+);
+const GLYPH_START = array<u32, 12>(0u, 8u, 10u, 16u, 24u, 27u, 34u, 43u, 45u, 54u, 63u, 69u);
+
+fn segDist(p: vec2f, s: vec4f) -> f32 {
+  let a = s.xy; let ba = s.zw - a;
+  let t = clamp(dot(p - a, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+  return length(p - a - ba * t);
+}
+// distance (glyph units) to the strokes of "<number>동" laid out from x = 0
+fn blockNumberDist(p: vec2f, num: u32) -> f32 {
+  let k = clamp(i32(floor(p.x / 1.45)), 0, 3);
+  let q = vec2f(p.x - f32(k) * 1.45, p.y);
+  var g = 10u;
+  if (k == 0) { g = num / 100u; } else if (k == 1) { g = (num / 10u) % 10u; } else if (k == 2) { g = num % 10u; }
+  var d = 1e3;
+  var segs = GLYPH_SEGS;
+  var starts = GLYPH_START;
+  for (var i = starts[g]; i < starts[g + 1u]; i++) { d = min(d, segDist(q, segs[i])); }
+  if (g == 10u) { d = min(d, abs(length((q - vec2f(0.5, 0.36)) * vec2f(1.0, 1.15)) - 0.33)); }
+  return d;
 }
 
 fn concrete(world: vec3f, n: vec3f, base: vec3f, dist: f32) -> vec3f {
@@ -174,7 +278,10 @@ fn concrete(world: vec3f, n: vec3f, base: vec3f, dist: f32) -> vec3f {
   let id = in.mat.x;
   let rough0 = f32(in.mat.y) / 255.0;
   let metal0 = f32(in.mat.z) / 255.0;
-  let seed = in.mat.w + u32(abs(in.aux.x) * 7.0) * 131u;
+  let wa = in.col.a;
+  let wt = select(select(select(3u, 2u, wa < 0.8), 1u, wa < 0.45), 0u, wa < 0.2);
+  // the gable number band carries its own base height in aux; keep the building's seed there
+  let seed = in.mat.w + select(u32(abs(in.aux.x) * 7.0) * 131u, 0u, wt == 1u);
   let dist = length(in.rel);
   // facade coordinates and derivatives (uniform control flow)
   let tw = normalize(vec2f(-n.z, n.x) + vec2f(1e-5, 0.0));
@@ -182,6 +289,7 @@ fn concrete(world: vec3f, n: vec3f, base: vec3f, dist: f32) -> vec3f {
   let fv = in.world.y - in.aux.x;
   let fwu = fwidth(fu);
   let fwv = fwidth(fv);
+  let fwTx = fwidth(in.tx) * 8.0;
   let deckZ = in.lpos.z / 1.2;
   let fwDeck = fwidth(deckZ);
   var s: Surf;
@@ -189,10 +297,26 @@ fn concrete(world: vec3f, n: vec3f, base: vec3f, dist: f32) -> vec3f {
   let isWall = abs(n.y) < 0.3;
   if ((id >= 1u && id <= 5u) || id == 13u) {
     if (isWall) {
-      let f = facade(fu, fv, fwu, fwv, max(in.aux.y, 2.5), seed, id, in.col.rgb, step(0.5, in.col.a), dist);
-      s.albedo = f.alb; s.rough = f.rough; s.f0 = f.f0; s.metal = f.metal; s.emit = f.emit;
+      let t3 = vec3f(tw.x, 0.0, tw.y);
+      let l = F.sunDir.xyz;
+      let f = facade(fu, fv, in.world.y, fwu, fwv, max(in.aux.y, 2.5), seed, id, in.col.rgb, wt, vec3f(dot(l, t3), l.y, dot(l, n)), dist);
+      s.albedo = f.alb; s.rough = f.rough; s.f0 = f.f0; s.metal = f.metal; s.emit = f.emit; s.sunOcc = f.sunOcc;
+      n = normalize(n + t3 * f.tilt.x + vec3f(0.0, f.tilt.y, 0.0));
       // contact darkening at the base
-      s.ao = mix(0.55, 1.0, smoothstep(0.0, 5.0, in.world.y - in.aux.x));
+      s.ao = f.ao * select(mix(0.55, 1.0, smoothstep(0.0, 5.0, in.world.y - in.aux.x)), 1.0, wt == 1u);
+      if (wt == 1u) {
+        // gable band: the painted block number (aux.y = glyph unit in metres, text starts 1 m up)
+        let p = vec2f(in.tx * 8.0 + 2.675, (fv - 1.0) / in.aux.y);
+        let num = 101u + (in.mat.w % 3u) * 100u + (in.mat.w / 3u) % 14u;
+        let d = blockNumberDist(p, num);
+        let aa = max(fwTx, fwv / in.aux.y) * 0.7 + 1e-4;
+        let ink = (1.0 - smoothstep(0.12 - aa, 0.12 + aa, d)) * step(-0.3, p.x) * step(p.x, 5.65);
+        let inks = array<vec3f, 4>(vec3f(0.10, 0.11, 0.13), vec3f(0.42, 0.07, 0.05), vec3f(0.08, 0.16, 0.34), vec3f(0.10, 0.27, 0.16));
+        s.albedo = mix(s.albedo, inks[(in.mat.w / 47u) % 4u], ink);
+      }
+    } else if (id == 4u && n.y < 0.97) {
+      // sloping glazed crown facets
+      s.albedo = vec3f(0.02, 0.025, 0.03) * in.col.rgb * 4.0; s.f0 = vec3f(0.07) + in.col.rgb * 0.08; s.rough = 0.05;
     } else {
       s.albedo = concrete(in.world, n, vec3f(0.30, 0.30, 0.29), dist); s.rough = 0.85;
     }

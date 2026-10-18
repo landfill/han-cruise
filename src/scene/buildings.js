@@ -1,7 +1,11 @@
 // Building geometry from OSM footprints (see tools/build-scene.mjs for the packed format).
 // Runs in a worker: extruded walls with facade materials, triangulated roofs, landmark
-// treatments (63 Building's gold glass and tapering ends, Parc.1's red frames, rooftop
-// aviation lights on tall towers). Output: one mesh per 500 m tile for culling.
+// treatments (63 Building's gold glass and tapering ends, Parc.1's red frames, IFC's chiselled
+// crowns, rooftop aviation lights on tall towers). Output: one mesh per 500 m tile for culling.
+//
+// Wall types go in the vertex colour alpha (read by facade() in src/wgsl/mesh.js):
+// 255 windows (balcony front on apartments), 170 apartment back (corridor side),
+// 85 gable band carrying the painted block number, 0 blank.
 import earcut from 'earcut';
 import { MeshBuilder } from './meshbuilder.js';
 import { MAT } from '../wgsl/mesh.js';
@@ -47,6 +51,9 @@ function ringArea(p) {
   return s / 2;
 }
 const pick = (arr, seed) => arr[seed % arr.length];
+const WALL = { WINDOWS: 255, BACK: 170, GABLE_NO: 85, BLANK: 0 };
+// gable block number ("101동"): 4 glyphs of 1 unit wide with 0.45 gaps, 1.6 units tall
+const GABLE_TEXT_W = 4 + 3 * 0.45;
 
 function principal(p) {
   const n = p.length / 2;
@@ -101,6 +108,19 @@ export function buildBuildingMeshes(list) {
     // 63 Building: its narrow ends lean inwards, the top is ~60 % of the base length
     let taper = null;
     if (b.mat === 'gold') { const pr = principal(p0); taper = { ...pr, top: 0.62 }; }
+    // IFC towers: the tops are chiselled off by a sloping glass facet ("crystalline outcrops").
+    // The slope direction and angle are approximations from photographs, not drawings.
+    let crown = null;
+    if (b.landmark && b.mat === 'glassBlue') {
+      const dir = (b.seed & 1) ? 1 : -1;
+      crown = { u: pr0.ux * dir, w: pr0.uz * dir, s0: dir > 0 ? sA : -sB, len: lenL, drop: Math.min(lenL * 0.55, (y1 - y0) * 0.12) };
+    }
+    // roof height at a footprint point (y1 except under a crown)
+    const topY = (x, z) => {
+      if (!crown) return y1;
+      const sv = (x - pr0.mx) * crown.u + (z - pr0.mz) * crown.w;
+      return y1 - crown.drop * Math.max(0, Math.min(1, (sv - crown.s0) / crown.len));
+    };
     const at = (x, z, y) => {
       if (!taper) return [x, z];
       const t = Math.max(0, Math.min(1, (y - y0) / (y1 - y0)));
@@ -136,13 +156,38 @@ export function buildBuildingMeshes(list) {
           }
           continue;
         }
-        // apartment slabs: the short end walls are blank (the gable ends carry the block number)
+        // apartment slabs: the short end walls are blank and carry the painted block number;
+        // of the long walls the south-facing one has the balconies (the usual orientation)
         const edgeLen = Math.hypot(bx - ax, bz - az);
         const blank = slab && edgeLen < slabEnd;
-        mb.col[3] = blank ? 0 : 255;
+        let wt = WALL.WINDOWS;
+        if (blank) wt = WALL.BLANK;
+        else if (slab && !r.inner && nz < 0) wt = WALL.BACK;
+        mb.col[3] = wt;
+        const ta = topY(ax, az), tb = topY(bx, bz);
+        let yMid = Math.max(ta, tb);
+        let unit = 0;
+        if (blank && !r.inner && edgeLen > 8 && y1 - y0 > 25) {
+          unit = Math.min(2.4, edgeLen * 0.78 / GABLE_TEXT_W);
+          yMid = y1 - 1.6 * unit - 3.0;
+        }
         const v0 = mb.vertex(ax, y0, az, nx, 0, nz), v1 = mb.vertex(bx, y0, bz, nx, 0, nz);
-        const v2 = mb.vertex(bx, y1, bz, nx, 0, nz), v3 = mb.vertex(ax, y1, az, nx, 0, nz);
+        const v2 = mb.vertex(bx, unit ? yMid : tb, bz, nx, 0, nz), v3 = mb.vertex(ax, unit ? yMid : ta, az, nx, 0, nz);
         mb.tri(v0, v1, v2); mb.tri(v0, v2, v3);
+        if (unit) {
+          // number band: aux = (band base, glyph unit), normal.w = horizontal text coordinate
+          // (glyph units from the wall centre, along the viewer's right, /8 to fit snorm8)
+          const nl = Math.hypot(nx, nz), rx = nz / nl, rz = -nx / nl;
+          const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+          const tc = (x, z) => Math.round(((x - mx) * rx + (z - mz) * rz) / unit / 8 * 127);
+          mb.col[3] = WALL.GABLE_NO;
+          mb.setAux(yMid, unit);
+          const w0 = mb.vertex(ax, yMid, az, nx, 0, nz), w1 = mb.vertex(bx, yMid, bz, nx, 0, nz);
+          const w2 = mb.vertex(bx, y1, bz, nx, 0, nz), w3 = mb.vertex(ax, y1, az, nx, 0, nz);
+          for (const [vi, x, z] of [[w0, ax, az], [w1, bx, bz], [w2, bx, bz], [w3, ax, az]]) mb.i8[vi * 32 + 15] = tc(x, z);
+          mb.tri(w0, w1, w2); mb.tri(w0, w2, w3);
+          mb.setAux(b.base, b.floorH);
+        }
       }
     }
     mb.col[3] = 255;
@@ -156,9 +201,14 @@ export function buildBuildingMeshes(list) {
       }
     }
     const tri = earcut(flat, holes.length ? holes : null, 2);
-    mb.material(MAT.ROOF, b.mat === 'house' ? [0.42, 0.33, 0.3] : pick(ROOF_COLS, b.seed >>> 5), 0.9, 0, b.seed);
+    if (crown) {
+      // the sloping facet is glazed like the walls
+      mb.material(id, col, 0.1, 0, b.seed);
+    } else mb.material(MAT.ROOF, b.mat === 'house' ? [0.42, 0.33, 0.3] : pick(ROOF_COLS, b.seed >>> 5), 0.9, 0, b.seed);
     const rb = mb.vcount;
-    for (let i = 0; i < flat.length; i += 2) mb.vertex(flat[i], y1, flat[i + 1], 0, 1, 0);
+    // roof plane normal (tilted under a crown)
+    const tn = crown ? [crown.u * crown.drop / crown.len, 1, crown.w * crown.drop / crown.len] : [0, 1, 0];
+    for (let i = 0; i < flat.length; i += 2) mb.vertex(flat[i], topY(flat[i], flat[i + 1]), flat[i + 1], tn[0], tn[1], tn[2]);
     for (let i = 0; i < tri.length; i += 3) mb.tri(rb + tri[i], rb + tri[i + 2], rb + tri[i + 1]);
     // Parc.1: red steel frames up the corners and the middle of the long sides
     if (b.mat === 'parc1') {
@@ -183,7 +233,7 @@ export function buildBuildingMeshes(list) {
       for (const [a, c] of [[[ax, az], [bx, bz]], [[dx, dz], [cx2, cz2]]]) mb.beam([a[0], y1 + 7, a[1]], [c[0], y1 + 7, c[1]], 2.2, 2.4);
     }
     // rooftop structures: stair/elevator cores on apartment blocks, plant rooms on offices
-    if (b.h > 20 && b.mat !== 'gold' && b.mat !== 'parc1' && lenL > 12) {
+    if (b.h > 20 && b.mat !== 'gold' && b.mat !== 'parc1' && !crown && lenL > 12) {
       const roofCol = b.mat === 'residential' ? pick(RES_COLS, b.seed >>> 3) : [0.45, 0.45, 0.44];
       mb.material(b.mat === 'residential' ? MAT.RESIDENTIAL : MAT.CONCRETE, roofCol, 0.85, 0, b.seed);
       mb.col[3] = 0;
@@ -217,7 +267,7 @@ export function buildBuildingMeshes(list) {
       const step = Math.max(1, Math.floor(n / 4));
       for (let i = 0; i < n; i += step) {
         const q = at(p0[i * 2], p0[i * 2 + 1], y1);
-        lights.push(q[0], y1 + 1.2, q[1]);
+        lights.push(q[0], topY(q[0], q[1]) + 1.2, q[1]);
       }
     }
   }

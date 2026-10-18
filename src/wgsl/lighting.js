@@ -124,15 +124,16 @@ fn envSpec(r: vec3f, rough: f32) -> vec3f {
   return textureSampleLevel(envCube, sampC, rr, lod).rgb;
 }
 
-// Standard opaque shading used by meshes and terrain.
-struct Surf { albedo: vec3f, rough: f32, metal: f32, f0: vec3f, emit: vec3f, ao: f32 };
+// Standard opaque shading used by meshes and terrain. sunOcc: extra direct-sun shadowing from
+// sub-geometry detail such as window recesses (0 = none; Surf vars are zero-initialised).
+struct Surf { albedo: vec3f, rough: f32, metal: f32, f0: vec3f, emit: vec3f, ao: f32, sunOcc: f32 };
 fn shade(s: Surf, n: vec3f, rel: vec3f, world: vec3f) -> vec3f {
   let dist = length(rel);
   let v = -rel / max(dist, 1e-4);
   let l = F.sunDir.xyz;
   let sh = shadowAt(rel, n);
   let occ = overheadOcclusion(world);
-  let sun = sunLight() * sh * occ;
+  let sun = sunLight() * sh * occ * (1.0 - s.sunOcc);
   let nl = max(dot(n, l), 0.0);
   let diffCol = s.albedo * (1.0 - s.metal);
   let f0 = mix(s.f0, s.albedo, s.metal);
