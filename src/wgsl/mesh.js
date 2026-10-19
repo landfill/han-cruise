@@ -195,10 +195,16 @@ fn facade(u: f32, v: f32, wy: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, k
   // a curtained balcony window glows dimmer than a bare one
   let bright = (0.45 + 0.8 * h2(ccell.x, ccell.y + 31.0, seed)) * select(1.0, 0.6, balcony);
   let one = tone * bright * lit;
-  // seen edge-on or from far away, recessed windows are partly hidden by the wall depth
-  let avg = mix(warm, cool, 0.3) * litFrac * 0.85 * 0.3 * select(1.0, 0.6, balcony);
-  let far = smoothstep(0.5, 1.4, max(fw.x * clusterW, fw.y) / clusterW + max(fw.x, fw.y) * 0.25);
-  f.emit = mix(one * win, avg * dutyX * dutyY * hasWin, far) * F.night.y * 0.009;
+  // three levels so a tower keeps its lit / dark pattern as it recedes:
+  // single windows -> lit floor sections (window grid box-filtered inside 'win', so it cannot
+  // sparkle) -> one average once even a section is sub-pixel.
+  // Recessed windows seen from afar are partly hidden by the wall depth (curtain walls are not).
+  let hide = select(0.45, 0.85, depth < 0.1) * select(1.0, 0.6, balcony);
+  let section = tone * bright * step(cR, litFrac) * step(0.6, v) * hasWin * select(1.0, 0.85, isHome) * win * hide;
+  let avg = mix(warm, cool, 0.3) * litFrac * 0.85 * select(1.0, 0.85, isHome) * hide * dutyX * dutyY * hasWin;
+  let fine = smoothstep(0.35, 0.9, max(fw.x, fw.y));
+  let far = smoothstep(0.5, 1.3, max(fw.x / clusterW, fw.y) + max(fw.x, fw.y) * 0.05);
+  f.emit = mix(mix(one * win, section, fine), avg, far) * F.night.y * 0.009;
   return f;
 }
 

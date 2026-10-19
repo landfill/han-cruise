@@ -398,7 +398,7 @@ fn cumulus(dir: vec3f, pixAng: f32, steps: i32, jitter: f32) -> vec4f {
       let h = clamp((alt - cuBase()) / (cuTop() - cuBase()), 0.0, 1.0);
       let amb = (skyUp * (0.3 + 0.7 * h) + skySide * 0.3) * (1.0 - 0.5 * d);
       // at night the bases reflect the city (the orange ceiling); moonlight on the tops
-      let night = vec3f(1.0, 0.70, 0.45) * F.night.z * 0.9 * (1.0 - 0.6 * h)
+      let night = vec3f(1.0, 0.70, 0.45) * F.night.z * 0.5 * (1.0 - 0.6 * h)
                 + F.moonDir.w * max(F.moonDir.y, 0.0) * vec3f(0.62, 0.68, 0.80) * 0.3;
       let S = sunC * ms * powder * 3.0 + amb + night;
       let Tr = exp(-d * sigma0 * dt);
@@ -462,7 +462,7 @@ fn shadeLayer(dir: vec3f, h: CloudHit, hc: f32, d: f32, s1: f32, s2: f32, s3: f3
   let amb = (skyAtmo(normalize(vec3f(dir.x, 0.03, dir.z))) * 0.26 + skyAtmo(vec3f(0.0, 1.0, 0.0)) * 0.42)
             * alpha * (1.0 - 0.35 * d);
   // at night the cloud bases reflect the city's light back down (the familiar orange ceiling)
-  let cityLit = vec3f(1.0, 0.70, 0.45) * F.night.z * 2.2 * alpha * (0.6 + 0.4 * d);
+  let cityLit = vec3f(1.0, 0.70, 0.45) * F.night.z * 1.1 * alpha * (0.6 + 0.4 * d);
   // moonlight on the cloud deck
   let moonC = F.moonDir.w * max(F.moonDir.y, 0.0) * vec3f(0.62, 0.68, 0.80) * alpha * 0.35;
   return vec4f(single + ms + amb + cityLit + moonC, alpha);

@@ -110,8 +110,10 @@ fn landClass(xz: vec2f) -> u32 {
   // stones, and stepped concrete terraces (0.4 m rise, 0.7 m tread - the same slope). Which
   // stretch gets which is procedural, not mapped.
   var nn = n;
+  var revBand = 0.0;
   if (d < 5.5 && d > -6.0) {
     let band = 1.0 - smoothstep(4.6, 5.4, d);
+    revBand = band;
     let stepped = smoothstep(0.52, 0.56, textureSampleLevel(detailTex, sampR, xz * 0.0011, 0.0).b);
     // riprap: dark grey stones, bumpy, weeds and dry grass in the joints higher up
     let rg = vec2f(textureSampleLevel(detailTex, sampR, (xz + vec2f(0.25, 0.0)) * 0.55, rockLod).g - rock,
@@ -148,7 +150,8 @@ fn landClass(xz: vec2f) -> u32 {
   var s: Surf;
   s.albedo = alb; s.rough = rough; s.metal = 0.0; s.f0 = vec3f(0.035); s.emit = vec3f(0.0); s.ao = 1.0;
   // street/park light pools on paths and roads at night
-  if (cls == 3u || cls == 6u || cls == 7u) { s.emit = alb * vec3f(1.0, 0.75, 0.5) * F.night.y * 0.006; }
+  // (not on the revetment slope below the promenade, which the lamps barely reach)
+  if (cls == 3u || cls == 6u || cls == 7u) { s.emit = alb * vec3f(1.0, 0.75, 0.5) * F.night.y * 0.006 * (1.0 - revBand); }
   var col = shade(s, nn, in.rel, in.world);
   col = applyFog(col, in.rel);
   return vec4f(col, select(1.0, length(in.rel), isReflPass()));
