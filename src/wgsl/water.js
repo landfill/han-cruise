@@ -175,6 +175,24 @@ fn reflUV(relp: vec3f) -> vec2f {
   let blurW = sigU * 2.0 * D / max(pixW * (D + camToP), 1e-5);
   let lod = clamp(log2(max(blurW * 0.35, 1.0)), 0.0, min(F.misc.z - 1.0, 2.5));
   var refl = textureSampleLevel(reflTex, sampC, clamp(uv, vec2f(0.001), vec2f(0.999)), lod).rgb;
+  // night: lamps are tiny bright points, so one reflection direction per pixel turns their
+  // reflection into sparse dots that pop on and off as the ripples move. Average over slopes
+  // tilted towards/away from the viewer (the direction that stretches lights into columns), so
+  // the columns shimmer instead of flashing.
+  let nightW = smoothstep(0.3, 0.7, F.night.x);
+  if (nightW > 0.0) {
+    let spread = max(sigV, 0.025);
+    var acc = refl;
+    for (var k = -2; k <= 2; k++) {
+      if (k == 0) { continue; }
+      let nK = normalize(nrm + vh * (tilt + f32(k) * 0.55 * spread));
+      var RK = reflect(-V, nK);
+      RK.y = abs(RK.y);
+      let uvK = reflUV(relP + normalize(RK) * D);
+      acc += textureSampleLevel(reflTex, sampC, clamp(uvK, vec2f(0.001), vec2f(0.999)), lod + 0.5).rgb;
+    }
+    refl = mix(refl, acc * 0.2, nightW);
+  }
   // outside the reflection frustum fall back to the env cube
   let inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
   let envLod = clamp(log2(max(2.0 * sig * ENV_TEXELS_PER_RAD, 1.0)), 0.0, ENV_MAXMIP);
