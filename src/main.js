@@ -124,7 +124,7 @@ async function load() {
     const tGeom = performance.now();
     setProgress(0.8, '셰이더 준비 중');
     const q = state.quality === 'auto' ? 'high' : state.quality;
-    renderer = await createRenderer({ device: gpu.device, context, format, canvas, data, geom, quality: q, reflEvery: Number(qs.get('refl')) || (MOBILE ? 2 : 1), log });
+    renderer = await createRenderer({ device: gpu.device, context, format, canvas, data, geom, quality: q, reflEvery: Number(qs.get('refl')) || (MOBILE ? 2 : 1), msaa: Number(qs.get('msaa')) || 4, lite: qs.has('lite') ? Number(qs.get('lite')) : (MOBILE ? LITE_MOBILE : 0), log });
     const tGpu = performance.now();
     log(`load: data ${(tData - t0).toFixed(0)} ms, geometry ${(tGeom - tData).toFixed(0)} ms, gpu init ${(tGpu - tGeom).toFixed(0)} ms, buildings ${buildings.stats.buildings} (${buildings.stats.estimated} est.), ${(buildings.stats.tris / 1e6).toFixed(2)} M tris`);
     window.__loadTimes = { data: tData - t0, geometry: tGeom - tData, gpu: tGpu - tGeom, total: tGpu - t0 };
@@ -384,6 +384,8 @@ let frames = 0;
 const MOBILE = qs.has('mobile') ? qs.get('mobile') === '1' : matchMedia('(hover: none) and (pointer: coarse)').matches;
 const MAX_DPR = MOBILE ? 2 : Infinity;
 const PIXEL_BUDGET = Number(qs.get('budget')) || (MOBILE ? 1.4e6 : 1920 * 1080);
+// phones compile the reduced shading paths (all LITE flags in src/wgsl/lighting.js); ?lite=N overrides
+const LITE_MOBILE = 63;
 
 function renderSize() {
   const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);

@@ -25,7 +25,6 @@ const GU = () => GPUBufferUsage;
 const TU = () => GPUTextureUsage;
 const SS = () => GPUShaderStage;
 const HDR = 'rgba16float';
-const MSAA = 4;
 const BLOOM_LEVELS = 7;
 const CASC_L = [41.0, 9.7, 2.3, 0.53];   // FFT patch sizes (m): river chop, ripples, capillaries
 const SHADOW_FAR = [70, 600, 3600];
@@ -37,9 +36,12 @@ export const QUALITY = {
   high: { fftN: 256, shadow: 2048, reflScale: 0.5, scale: 1.0, treeDist: 2500, label: '높음' },
 };
 
-export async function createRenderer({ device, context, format, canvas, data, geom, quality = 'high', reflEvery = 1, log = console.log }) {
+export async function createRenderer({ device, context, format, canvas, data, geom, quality = 'high', reflEvery = 1, msaa = 4, lite = 0, log = console.log }) {
+  const MSAA = msaa === 1 ? 1 : 4;   // WebGPU allows 1 or 4 samples
   const U = GU(), T = TU(), S = SS();
   const Q = { ...QUALITY[quality] };
+  // phones (lite shading): a 1.4 MP screen needs less shadow and reflection resolution
+  if (lite) { Q.shadow = Math.min(Q.shadow, 1536); Q.reflScale = Math.min(Q.reflScale, 0.4); }
   const N = Q.fftN;
   const meta = data.meta;
   const errors = [];
@@ -49,6 +51,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   // helpers
   // ------------------------------------------------------------------------------------------
   async function shader(code, label) {
+    // phones: compile the reduced shading paths (see LITE in src/wgsl/lighting.js)
+    if (lite) code = code.replace('const LITE: u32 = 0u;', `const LITE: u32 = ${lite >>> 0}u;`);
     const m = device.createShaderModule({ code, label });
     const info = await m.getCompilationInfo();
     let bad = false;
@@ -510,7 +514,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   const GRID = 32;
   const gridIdx = upload(gridIndices(GRID), U.INDEX, 'grid idx');
   const waterLOD = new CDLOD({ leaf: 12, grid: GRID, lods: 11, maxDist: 14000, yMin: -2, yMax: 2, xyMargin: 2, maxNodes: 4096 });
-  const landLOD = new CDLOD({ leaf: 48, grid: GRID, lods: 10, maxDist: 30000, yMin: -6, yMax: 650, xyMargin: 1, maxNodes: 4096 });
+  // phones (LITE 32): twice the leaf size, a quarter of the land vertices near the camera
+  const landLOD = new CDLOD({ leaf: (lite & 32) ? 96 : 48, grid: GRID, lods: 10, maxDist: 30000, yMin: -6, yMax: 650, xyMargin: 1, maxNodes: 4096 });
   const landLODRefl = new CDLOD({ leaf: 96, grid: GRID, lods: 9, maxDist: 30000, yMin: -6, yMax: 650, xyMargin: 1, maxNodes: 4096 });
   const waterInst = buf(waterLOD.maxNodes * 16, U.VERTEX | U.COPY_DST, 'water nodes');
   const landInst = buf(landLOD.maxNodes * 16, U.VERTEX | U.COPY_DST, 'land nodes');
@@ -554,7 +559,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     skyTex = device.createTexture({ size: [Math.max(1, W >> 1), Math.max(1, H >> 1)], format: HDR, usage: T.RENDER_ATTACHMENT | T.TEXTURE_BINDING });
     skyPass.colorAttachments[0].view = skyTex.createView();
     bgSkyComp = bgAuto(P.skyComp, [skyTex.createView(), linSamp]);
-    colorMS = device.createTexture({ size: [W, H], format: HDR, sampleCount: MSAA, usage: T.RENDER_ATTACHMENT });
+    colorMS = MSAA > 1 ? device.createTexture({ size: [W, H], format: HDR, sampleCount: MSAA, usage: T.RENDER_ATTACHMENT }) : null;
     depthMS = device.createTexture({ size: [W, H], format: 'depth32float', sampleCount: MSAA, usage: T.RENDER_ATTACHMENT });
     hdrTex = device.createTexture({ size: [W, H], format: HDR, usage: T.RENDER_ATTACHMENT | T.TEXTURE_BINDING | T.COPY_SRC });
     const bw = Math.max(1, W >> 1), bh = Math.max(1, H >> 1);
@@ -563,8 +568,10 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     reflMips = Math.min(6, Math.floor(Math.log2(Math.min(RW, RH))) - 2);
     reflTex = device.createTexture({ size: [RW, RH], format: HDR, mipLevelCount: reflMips, usage: T.RENDER_ATTACHMENT | T.TEXTURE_BINDING | T.STORAGE_BINDING });
     reflDepth = device.createTexture({ size: [RW, RH], format: 'depth32float', usage: T.RENDER_ATTACHMENT });
-    mainPass.colorAttachments[0].view = colorMS.createView();
-    mainPass.colorAttachments[0].resolveTarget = hdrTex.createView();
+    // without MSAA the main pass renders straight into the HDR target (no resolve)
+    mainPass.colorAttachments[0].view = MSAA > 1 ? colorMS.createView() : hdrTex.createView();
+    mainPass.colorAttachments[0].resolveTarget = MSAA > 1 ? hdrTex.createView() : undefined;
+    mainPass.colorAttachments[0].storeOp = MSAA > 1 ? 'discard' : 'store';
     mainPass.depthStencilAttachment.view = depthMS.createView();
     reflPass.colorAttachments[0].view = reflTex.createView({ baseMipLevel: 0, mipLevelCount: 1 });
     reflPass.depthStencilAttachment.view = reflDepth.createView();

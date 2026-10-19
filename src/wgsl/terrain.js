@@ -66,9 +66,16 @@ struct VSOut {
   o.rel = world - F.camPos.xyz;
   // normal from central differences at the local grid spacing (smooth across the mesh)
   let e = max(spacing * (1.0 + mk), 0.5);
-  let hx = landHeight(xz + vec2f(e, 0.0)) - landHeight(xz - vec2f(e, 0.0));
-  let hz = landHeight(xz + vec2f(0.0, e)) - landHeight(xz - vec2f(0.0, e));
-  o.nrm = normalize(vec3f(-hx, 2.0 * e, -hz));
+  if (lite(32u)) {
+    // phones: forward differences (two height lookups instead of four)
+    let hx = landHeight(xz + vec2f(e, 0.0)) - world.y;
+    let hz = landHeight(xz + vec2f(0.0, e)) - world.y;
+    o.nrm = normalize(vec3f(-hx, e, -hz));
+  } else {
+    let hx = landHeight(xz + vec2f(e, 0.0)) - landHeight(xz - vec2f(e, 0.0));
+    let hz = landHeight(xz + vec2f(0.0, e)) - landHeight(xz - vec2f(0.0, e));
+    o.nrm = normalize(vec3f(-hx, 2.0 * e, -hz));
+  }
   o.pos = F.viewProj * vec4f(o.rel, 1.0);
   return o;
 }

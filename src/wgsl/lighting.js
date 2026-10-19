@@ -26,6 +26,16 @@ const ENV_TEXELS_PER_RAD: f32 = ${ENV_SIZE}.0 / 1.5708;
 
 fn isReflPass() -> bool { return F.camFwd.w > 0.5; }
 
+// Shading reductions for phones (bit flags, compile-time; the renderer substitutes the value):
+//   1 shadows: 2x2 PCF taps, no blend between cascades
+//   2 water: the capillary FFT cascade is left out of the per-pixel normal
+//   4 water: one reflection lookup (no hit-distance refinement)
+//   8 water at night: 2 instead of 4 extra reflection taps
+//  16 facades: no per-pane tilt and no window-recess sun shadow
+//  32 terrain: forward-difference normals (and, on the CPU side, a coarser CDLOD leaf)
+const LITE: u32 = 0u;
+fn lite(bit: u32) -> bool { return (LITE & bit) != 0u; }
+
 // Direct sunlight reaching the scene (atmosphere + cloud transmittance)
 // cumulus shadow on the ground at a scene point (precomputed map around the camera)
 fn cloudShadowAt(world: vec3f) -> f32 {
@@ -51,6 +61,15 @@ fn shadowCascade(rel: vec3f, c: i32, nrm: vec3f) -> f32 {
   if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0)) || p.z > 1.0 || p.z < 0.0) { return 1.0; }
   let ts = F.shadowP.x;
   var s = 0.0;
+  if (lite(1u)) {
+    // 2x2 bilinear comparison taps (a ~3x3 texel footprint)
+    for (var j = 0; j < 2; j++) {
+      for (var i = 0; i < 2; i++) {
+        s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + (vec2f(f32(i), f32(j)) - 0.5) * ts * 1.2, c, p.z - 0.00015);
+      }
+    }
+    return s * 0.25;
+  }
   // 3x3 PCF with hardware comparison (bilinear) taps
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
@@ -65,13 +84,13 @@ fn shadowAt(rel: vec3f, nrm: vec3f) -> f32 {
   if (d < F.shadowP.y * 0.92) {
     let s0 = shadowCascade(rel, 0, nrm);
     let k = smoothstep(F.shadowP.y * 0.75, F.shadowP.y * 0.92, d);
-    if (k > 0.0) { return mix(s0, shadowCascade(rel, 1, nrm), k); }
+    if (k > 0.0 && !lite(1u)) { return mix(s0, shadowCascade(rel, 1, nrm), k); }
     return s0;
   }
   if (d < F.shadowP.z * 0.92) {
     let s1 = shadowCascade(rel, 1, nrm);
     let k = smoothstep(F.shadowP.z * 0.75, F.shadowP.z * 0.92, d);
-    if (k > 0.0) { return mix(s1, shadowCascade(rel, 2, nrm), k); }
+    if (k > 0.0 && !lite(1u)) { return mix(s1, shadowCascade(rel, 2, nrm), k); }
     return s1;
   }
   if (d < F.shadowP.w) { return mix(shadowCascade(rel, 2, nrm), 1.0, smoothstep(F.shadowP.w * 0.8, F.shadowP.w, d)); }

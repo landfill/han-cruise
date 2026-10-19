@@ -122,7 +122,7 @@ fn facade(u: f32, v: f32, wy: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, k
   win *= step(0.6, v);
   // recess: the lintel (balcony slab) and the jamb on the sun side shade the glass. Close up the
   // shadow edge is resolved; once a floor shrinks to a few pixels its average coverage is used.
-  if (sun.z > 0.02) {
+  if (sun.z > 0.02 && !lite(16u)) {
     let fv0 = fract(cv - winBot);
     let fu0 = fract(cu + 0.5 * (1.0 - dutyX));
     let shY = depth * max(sun.y, 0.0) / sun.z;
@@ -148,7 +148,7 @@ fn facade(u: f32, v: f32, wy: f32, fwu: f32, fwv: f32, floorH: f32, seed: u32, k
   if (kind == 13u) { glassTint = vec3f(0.55, 0.62, 0.65); glassF0 = vec3f(0.08); glassRough = 0.05; }
   // individual panes are never quite coplanar: tilt each one a little so reflections break up
   // into a patchwork (fades out once panes are sub-pixel)
-  let tiltFade = 1.0 - smoothstep(0.1, 0.4, max(fw.x, fw.y));
+  let tiltFade = select(1.0 - smoothstep(0.1, 0.4, max(fw.x, fw.y)), 0.0, lite(16u));
   f.tilt = (vec2f(h2(cell.x, cell.y, seed + 3u), h2(cell.x, cell.y, seed + 5u)) - 0.5) * 0.035 * win * tiltFade;
   glassF0 *= 0.9 + 0.2 * cellR;
   // wall / spandrel, with large-scale weathering (rain streaks, patchy repainting)

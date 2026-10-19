@@ -100,7 +100,8 @@ fn reflUV(relp: vec3f) -> vec2f {
   var s = vec2f(0.0);
   var jxx = 0.0; var jzz = 0.0; var jxz = 0.0;
   var cov = vec3f(0.0);
-  for (var c = 0u; c < ${CASCADES}u; c++) {
+  let nCasc = select(${CASCADES}u, ${CASCADES - 1}u, lite(2u));
+  for (var c = 0u; c < nCasc; c++) {
     let uv = ax * F.cascInvL[c];
     var gk = select(1.0, gust, c >= 2u);
     gk *= select(1.0, 1.0 - 0.8 * calm, c >= 1u);
@@ -171,9 +172,12 @@ fn reflUV(relp: vec3f) -> vec2f {
   // deck vs. the far bank under it), the first guess lands on the wrong object and copies chunks
   // of the far lights into bridge-shaped blocks. Re-read the hit distance where it landed and keep
   // the nearer of the two (a nearer hit occludes the farther one).
-  let uv1 = reflUV(relP + R * D0);
-  let D1 = clamp(textureSampleLevel(reflTex, sampC, clamp(uv1, vec2f(0.001), vec2f(0.999)), 0.0).a - camToP, 2.0, 6000.0);
-  let D = min(D0, D1);
+  var D = D0;
+  if (!lite(4u)) {
+    let uv1 = reflUV(relP + R * D0);
+    let D1 = clamp(textureSampleLevel(reflTex, sampC, clamp(uv1, vec2f(0.001), vec2f(0.999)), 0.0).a - camToP, 2.0, 6000.0);
+    D = min(D0, D1);
+  }
   let uv = reflUV(relP + R * D);
   let pixW = 2.0 * length(F.camUp.xyz) * F.screen.w * 2.0;    // reflection texel angle (half res)
   // only the unresolved (sub-pixel) roughness blurs the reflection: resolved wave slopes are
@@ -193,7 +197,8 @@ fn reflUV(relp: vec3f) -> vec2f {
   if (nightW > 0.0) {
     let spread = max(sigV, 0.025);
     var acc = refl;
-    for (var k = -2; k <= 2; k++) {
+    let kMax = select(2, 1, lite(8u));
+    for (var k = -kMax; k <= kMax; k++) {
       if (k == 0) { continue; }
       let nK = normalize(nrm + vh * (tilt + f32(k) * 0.55 * spread));
       var RK = reflect(-V, nK);
@@ -201,7 +206,7 @@ fn reflUV(relp: vec3f) -> vec2f {
       let uvK = reflUV(relP + normalize(RK) * D);
       acc += textureSampleLevel(reflTex, sampC, clamp(uvK, vec2f(0.001), vec2f(0.999)), lod).rgb;
     }
-    refl = mix(refl, acc * 0.2, nightW);
+    refl = mix(refl, acc / f32(2 * kMax + 1), nightW);
   }
   // outside the reflection frustum fall back to the env cube
   let inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
