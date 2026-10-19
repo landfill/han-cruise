@@ -843,21 +843,11 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   }
   const boatBounds = { min: [0, 0, 0], max: [0, 0, 0] };
 
+  // Draw order: the boat first (nearest, often covering much of the view), then the visible tiles
+  // near to far, so early depth testing rejects hidden facade shading instead of overdrawing it.
+  const tileOrder = [];
   function drawMeshes(rp, pl, nPlanes, shadowPass, skipBoat, maxDist, camPos) {
     let n = 0;
-    rp.setBindGroup(1, bgMesh, [0]);
-    rp.setVertexBuffer(0, staticVB);
-    rp.setIndexBuffer(staticIB, 'uint32');
-    for (const m of meshes) {
-      if (!aabbVisible(pl, nPlanes, m.min, m.max)) continue;
-      if (maxDist && camPos && m.kind === 'building') {
-        const dx = Math.max(m.min[0] - camPos[0], 0, camPos[0] - m.max[0]);
-        const dz = Math.max(m.min[2] - camPos[2], 0, camPos[2] - m.max[2]);
-        if (dx * dx + dz * dz > maxDist * maxDist) continue;
-      }
-      rp.drawIndexed(m.count, 1, m.first, m.base);
-      n++;
-    }
     if (!skipBoat && aabbVisible(pl, nPlanes, boatBounds.min, boatBounds.max)) {
       rp.setBindGroup(1, bgMesh, [256]);
       rp.setVertexBuffer(0, boatVB);
@@ -865,6 +855,22 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       rp.drawIndexed(boatCount);
       n++;
     }
+    tileOrder.length = 0;
+    for (const m of meshes) {
+      if (!aabbVisible(pl, nPlanes, m.min, m.max)) continue;
+      if (camPos) {
+        const dx = Math.max(m.min[0] - camPos[0], 0, camPos[0] - m.max[0]);
+        const dz = Math.max(m.min[2] - camPos[2], 0, camPos[2] - m.max[2]);
+        m.d2 = dx * dx + dz * dz;
+        if (maxDist && m.kind === 'building' && m.d2 > maxDist * maxDist) continue;
+      }
+      tileOrder.push(m);
+    }
+    if (camPos && !shadowPass) tileOrder.sort((a, b) => a.d2 - b.d2);
+    rp.setBindGroup(1, bgMesh, [0]);
+    rp.setVertexBuffer(0, staticVB);
+    rp.setIndexBuffer(staticIB, 'uint32');
+    for (const m of tileOrder) { rp.drawIndexed(m.count, 1, m.first, m.base); n++; }
     return n;
   }
   function drawVehicles(rp, pipe) {

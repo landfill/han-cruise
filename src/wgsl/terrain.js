@@ -81,7 +81,10 @@ fn landClass(xz: vec2f) -> u32 {
 }
 
 @fragment fn fs(in: VSOut) -> @location(0) vec4f {
-  if (isReflPass() && in.world.y < -0.3) { discard; }
+  // The river water is opaque and always drawn over the bed, so bed fragments more than a few
+  // decimetres under the mean surface (the wake trough is ~0.3 m) are never seen: skip shading
+  // them instead of overdrawing the whole river.
+  if (in.world.y < select(-0.8, -0.3, isReflPass())) { discard; }
   let xz = in.world.xz;
   let n = normalize(in.nrm);
   let d = sdfAt(xz);
