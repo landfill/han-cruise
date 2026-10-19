@@ -31,4 +31,7 @@ export const SCENES = {
   perf_depart: { tod: 'golden', s: 70, view: 'bow', pitch: 0, time: 40, desc: 'perf: just after departure (bank and pier close)' },
   debug_top: { tod: 'golden', s: 980, free: { pos: [-200, 350, 900], yaw: 20, pitch: -25 }, time: 40, desc: 'debug overview' },
   debug_boat: { tod: 'golden', s: 980, freeRel: { pos: [-45, 18, -40], yaw: 135, pitch: -14 }, time: 40, desc: 'debug boat' },
+  boat_night: { tod: 'night', s: 980, freeRel: { pos: [-38, 9, -30], yaw: 130, pitch: -8 }, time: 40, desc: '야간, 유람선 외관 (갑판·선체 조명)' },
+  boat_aftdeck: { tod: 'day', s: 1300, view: 'stern', yaw: 160, pitch: -40, time: 40, desc: '선미 갑판 내려다보기: 갑판재·구명정·기류봉 (낮)' },
+  boat_foredeck: { tod: 'day', s: 1150, view: 'foredeck', yaw: 20, pitch: -24, time: 40, desc: '하갑판 선수: 계류 장비·양묘기·펜더 (낮)' },
 };

@@ -108,7 +108,7 @@ async function load() {
     setProgress(0.75, '교량·선박 생성 중');
     const bridges = buildBridges(data.meta.bridges);
     const viaducts = buildViaducts(data.meta.viaducts || []);
-    const boatGeo = buildBoat();
+    const boatGeo = buildBoat({ lite: MOBILE });
     boatGeo.dims = { length: BOAT.length, beam: BOAT.beam, draft: BOAT.draft };
     path = new Path(ROUTE_POINTS, 2);
     geom = {

@@ -8,6 +8,7 @@ export const MESH_STRIDE = 32;
 export const MAT = {
   PBR: 0, OFFICE: 1, RESIDENTIAL: 2, HOUSE: 3, CURTAIN: 4, GOLD: 5, ROOF: 6, CONCRETE: 7,
   STEEL: 8, LAMP: 9, DECK: 10, HULL: 11, CABIN_GLASS: 12, PARC1: 13, ASPHALT: 14, RUBBER: 15, OBSTRUCTION: 16,
+  DECK_WOOD: 17,
 };
 
 const MESH_IO = /* wgsl */ `
@@ -304,6 +305,13 @@ fn concrete(world: vec3f, n: vec3f, base: vec3f, dist: f32) -> vec3f {
   let fwTx = fwidth(in.tx) * 8.0;
   let deckZ = in.lpos.z / 1.2;
   let fwDeck = fwidth(deckZ);
+  // boat window mullions across the boat (end walls) and deck plank courses (0.14 m wide)
+  let mulX = in.lpos.x / 1.2;
+  let fwMulX = fwidth(mulX);
+  let plankX = in.lpos.x / 0.14;
+  let fwPlankX = fwidth(plankX);
+  let plankZ = in.lpos.z / 4.2;
+  let fwPlankZ = fwidth(plankZ);
   var s: Surf;
   s.albedo = in.col.rgb; s.rough = max(rough0, 0.04); s.metal = metal0; s.f0 = vec3f(0.04); s.emit = vec3f(0.0); s.ao = 1.0;
   let isWall = abs(n.y) < 0.3;
@@ -363,6 +371,32 @@ fn concrete(world: vec3f, n: vec3f, base: vec3f, dist: f32) -> vec3f {
   } else if (id == 12u) {
     s.albedo = vec3f(0.02, 0.025, 0.03); s.f0 = vec3f(0.05); s.rough = 0.04;
     s.emit = vec3f(1.0, 0.85, 0.62) * F.night.y * 0.006;
+    if (in.mat.w == 1u) {
+      // the boat's saloon glazing: aluminium mullions every 1.2 m (along the side walls, or
+      // across on the end walls: whichever coordinate runs along this face); panes a little
+      // uneven in brightness at night (curtains, lamps)
+      let alongZ = fwDeck > fwMulX;
+      let u = select(mulX, deckZ, alongZ);
+      let fu = select(fwMulX, fwDeck, alongZ);
+      let mull = 1.0 - filteredPulse(u + 0.04, 0.92, fu);
+      let pane = h2(floor(u), 3.0, 41u);
+      s.emit *= mix(0.3, 0.75, pane) * (1.0 - mull);
+      s.albedo = mix(s.albedo, vec3f(0.16, 0.17, 0.18), mull);
+      s.rough = mix(0.04, 0.45, mull);
+      s.f0 = mix(s.f0, vec3f(0.5), mull * 0.3);
+    }
+  } else if (id == 17u) {
+    // open deck: teak-look planks along the boat with dark caulking, staggered butt joints,
+    // a slightly different tone per plank and weathered grain
+    let row = floor(plankX);
+    let zz = plankZ + h2(row, 7.0, 17u);
+    let seamX = 1.0 - filteredPulse(plankX + 0.04, 0.92, fwPlankX);
+    let seamZ = 1.0 - filteredPulse(zz + 0.002, 0.996, fwPlankZ);
+    let tone = 0.78 + 0.4 * h2(row, floor(zz), 23u);
+    let grain = dtex(vec2f(in.lpos.x * 3.0, in.lpos.z * 0.35), 1.0, dist).r;
+    s.albedo = in.col.rgb * tone * (0.85 + 0.3 * grain);
+    s.albedo = mix(s.albedo, vec3f(0.03, 0.028, 0.025), max(seamX, seamZ) * 0.85);
+    s.rough = 0.62 + 0.2 * grain;
   } else if (id == 14u) {
     let g = dtex(in.world.xz, 0.5, dist).r;
     s.albedo = vec3f(0.07, 0.07, 0.075) * (0.85 + 0.3 * g); s.rough = 0.8;
