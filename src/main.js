@@ -16,6 +16,7 @@ import { Traffic } from './sim/traffic.js';
 import { CruiseAudio } from './audio/audio.js';
 import { routeSections } from './sim/sections.js';
 import { SCENES } from './sim/scenes.js';
+import { createMinimap } from './ui/minimap.js';
 
 const qs = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -64,7 +65,7 @@ function showUnsupported(reason) {
 // ---------------------------------------------------------------------------------------------
 // loading
 // ---------------------------------------------------------------------------------------------
-let gpu, renderer, data, geom, path, boat, deckCam, freeCam, traffic, audio, sections;
+let gpu, renderer, data, geom, path, boat, deckCam, freeCam, traffic, audio, sections, minimap;
 const canvas = $('c');
 let context, format;
 
@@ -176,6 +177,7 @@ function setupSim() {
   passTimes = new Float32Array(path.x.length);
   boat = new Boat(path, { cruise: 4.6, turnSpeed: 2.2, accel: 0.18 });
   sections = routeSections(path, data.meta.bridges);
+  try { minimap = createMinimap($('minimap'), { meta: data.meta, sdf: data.sdf, path }); } catch (e) { log('minimap: ' + e.message); }
   deckCam = new DeckCamera(geom.boat.viewpoints, geom.boat.walk);
   freeCam = new FreeCamera();
   const lanes = [...geom.bridges.lanes.map((l) => ({ pts: l.pts, speed: 15 })), ...geom.viaducts.lanes];
@@ -499,6 +501,7 @@ function updateHUD(cam) {
   const remain = (path.length - s) / 4.3;
   $('eta').textContent = boat.finished ? '' : `· 남은 거리 ${((path.length - s) / 1000).toFixed(1)}km · 약 ${Math.max(1, Math.round(remain / 60))}분`;
   $('routeFill').style.width = (100 * s / path.length).toFixed(1) + '%';
+  if (minimap) minimap.update(boat);
   if (boat.finished && $('ended').hidden && state.started && !shotMode) $('ended').hidden = false;
   // landmark caption: the most central visible landmark within range
   let best = null, bestScore = 0;
