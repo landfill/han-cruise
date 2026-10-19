@@ -155,14 +155,15 @@ function liferaft(mb, x, y, z, lite) {
   mb.material(MAT.STEEL, [0.55, 0.56, 0.57], 0.4, 0.8);
   for (const dx of [-0.42, 0.42]) mb.box([x + dx, y + 0.12, z], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.03, 0.12, 0.3);
   mb.box([x, y + 0.015, z], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.6, 0.015, 0.33);
+  // lashing straps: one dark band texture would need UVs; three short dark rings are cheap
+  mb.material(MAT.PBR, [0.12, 0.12, 0.13], 0.8);
+  for (const dx of [-0.4, 0.4]) mb.tube([x + dx - 0.03, y + 0.52, z], [x + dx + 0.03, y + 0.52, z], 0.285, lite ? 10 : 16);
   mb.material(MAT.HULL, [0.9, 0.9, 0.87], 0.35);
   const cy = y + 0.52;
   mb.tube([x - 0.62, cy, z], [x + 0.62, cy, z], 0.28, lite ? 10 : 16, true);
   if (!lite) {
-    // end domes and the seam band / lashing straps
+    // end domes
     for (const e of [-1, 1]) mb.tube([x + e * 0.62, cy, z], [x + e * 0.7, cy, z], 0.22, 14, true);
-    mb.material(MAT.PBR, [0.12, 0.12, 0.13], 0.8);
-    for (const dx of [-0.4, 0, 0.4]) mb.tube([x + dx - 0.025, cy, z], [x + dx + 0.025, cy, z], 0.285, 16);
   }
 }
 
@@ -221,8 +222,6 @@ function railing(mb, pts, y, height = 1.1, lite = false) {
       const t = k / n;
       const x = ax + (bx - ax) * t, z = az + (bz - az) * t;
       mb.tube([x, y, z], [x, y + height, z], 0.025, lite ? 4 : 6);
-      // welded base flange
-      if (!lite) mb.lathe(x, y, z, [[0.06, 0], [0.06, 0.012], [0.03, 0.03], [0.025, 0.05]], 8);
     }
     // three wire rails (sub-pixel on a phone, where one heavier rail stands in for them)
     if (lite) mb.tube([ax, y + 0.5, az], [bx, y + 0.5, bz], 0.008, 3);

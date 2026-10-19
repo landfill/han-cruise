@@ -113,6 +113,8 @@ async function load() {
     const nodeul = buildNodeul({ meta: data.meta, sdf: data.sdf, complexList: buildings.nodeul, lite: MOBILE });
     if (!data.treesEdited) { data.trees = editNodeulTrees(data.trees, nodeul.treeRow); data.treesEdited = true; }
     boatGeo.dims = { length: BOAT.length, beam: BOAT.beam, draft: BOAT.draft };
+    // shadow and reflection passes draw the light build (phones use it everywhere)
+    boatGeo.lite = MOBILE ? null : buildBoat({ lite: true }).mesh;
     path = new Path(ROUTE_POINTS, 2);
     geom = {
       path, buildings, bridges, viaducts, boat: boatGeo, nodeul,

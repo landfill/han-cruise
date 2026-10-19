@@ -303,15 +303,17 @@ fn concrete(world: vec3f, n: vec3f, base: vec3f, dist: f32) -> vec3f {
   let fwu = fwidth(fu);
   let fwv = fwidth(fv);
   let fwTx = fwidth(in.tx) * 8.0;
+  // boat-frame coordinates: deck seams, window mullions (1.2 m), plank courses (0.14 m wide,
+  // 4.2 m long); one derivative serves them all
+  let fwL = fwidth(in.lpos.xz);
   let deckZ = in.lpos.z / 1.2;
-  let fwDeck = fwidth(deckZ);
-  // boat window mullions across the boat (end walls) and deck plank courses (0.14 m wide)
+  let fwDeck = fwL.y / 1.2;
   let mulX = in.lpos.x / 1.2;
-  let fwMulX = fwidth(mulX);
+  let fwMulX = fwL.x / 1.2;
   let plankX = in.lpos.x / 0.14;
-  let fwPlankX = fwidth(plankX);
+  let fwPlankX = fwL.x / 0.14;
   let plankZ = in.lpos.z / 4.2;
-  let fwPlankZ = fwidth(plankZ);
+  let fwPlankZ = fwL.y / 4.2;
   var s: Surf;
   s.albedo = in.col.rgb; s.rough = max(rough0, 0.04); s.metal = metal0; s.f0 = vec3f(0.04); s.emit = vec3f(0.0); s.ao = 1.0;
   let isWall = abs(n.y) < 0.3;

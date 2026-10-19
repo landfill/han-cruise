@@ -457,6 +457,10 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   const boatVB = upload(geom.boat.mesh.vertices, U.VERTEX, 'boat vertices');
   const boatIB = upload(geom.boat.mesh.indices, U.INDEX, 'boat indices');
   const boatCount = geom.boat.mesh.icount;
+  // shadow and reflection passes use the light boat build (no wire rails, flanges, rope turns)
+  const boatLo = geom.boat.lite || geom.boat.mesh;
+  const boatVBLo = boatLo === geom.boat.mesh ? boatVB : upload(boatLo.vertices, U.VERTEX, 'boat vertices (lite)');
+  const boatIBLo = boatLo === geom.boat.mesh ? boatIB : upload(boatLo.indices, U.INDEX, 'boat indices (lite)');
   // traffic: car / bus templates + per-frame instance buffers
   const vehicleKinds = ['car', 'bus'].map((k) => ({
     vb: upload(geom[k].vertices, U.VERTEX, k), ib: upload(geom[k].indices, U.INDEX, k), count: geom[k].icount,
@@ -855,13 +859,13 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   // Draw order: the boat first (nearest, often covering much of the view), then the visible tiles
   // near to far, so early depth testing rejects hidden facade shading instead of overdrawing it.
   const tileOrder = [];
-  function drawMeshes(rp, pl, nPlanes, shadowPass, skipBoat, maxDist, camPos) {
+  function drawMeshes(rp, pl, nPlanes, shadowPass, skipBoat, maxDist, camPos, full = false) {
     let n = 0;
     if (!skipBoat && aabbVisible(pl, nPlanes, boatBounds.min, boatBounds.max)) {
       rp.setBindGroup(1, bgMesh, [256]);
-      rp.setVertexBuffer(0, boatVB);
-      rp.setIndexBuffer(boatIB, 'uint32');
-      rp.drawIndexed(boatCount);
+      rp.setVertexBuffer(0, full ? boatVB : boatVBLo);
+      rp.setIndexBuffer(full ? boatIB : boatIBLo, 'uint32');
+      rp.drawIndexed(full ? boatCount : boatLo.icount);
       n++;
     }
     tileOrder.length = 0;
@@ -1066,7 +1070,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       const np = extractPlanes(vp, planes, cam.pos[0], cam.pos[1], cam.pos[2], false);
       rp.setBindGroup(0, bgSceneMain);
       rp.setPipeline(P.mesh.main);
-      if (!skip.meshes) stats.meshesDrawn = drawMeshes(rp, planes, np, false, false, 0, cam.pos);
+      if (!skip.meshes) stats.meshesDrawn = drawMeshes(rp, planes, np, false, false, 0, cam.pos, true);
       if (stats.landNodes && !skip.terrain) {
         rp.setPipeline(P.terrain.main); rp.setBindGroup(1, bgTerrain);
         rp.setVertexBuffer(0, landInst); rp.setIndexBuffer(gridIdx, 'uint16');
