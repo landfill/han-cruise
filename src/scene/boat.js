@@ -150,21 +150,20 @@ function chock(mb, x, y, z, side) {
   mb.box([x + side * 0.072, y + 0.13, z], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.004, 0.06, 0.11);
 }
 
-// Inflatable liferaft canister (white GRP capsule with a seam band) on a steel cradle
+// Inflatable liferaft canister (white GRP capsule with lashing straps) on a steel cradle. Kept
+// low-poly: the canisters fill much of the aft view, and fans of thin cap triangles are costly
+// under MSAA.
 function liferaft(mb, x, y, z, lite) {
   mb.material(MAT.STEEL, [0.55, 0.56, 0.57], 0.4, 0.8);
-  for (const dx of [-0.42, 0.42]) mb.box([x + dx, y + 0.12, z], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.03, 0.12, 0.3);
-  mb.box([x, y + 0.015, z], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.6, 0.015, 0.33);
-  // lashing straps: one dark band texture would need UVs; three short dark rings are cheap
-  mb.material(MAT.PBR, [0.12, 0.12, 0.13], 0.8);
-  for (const dx of [-0.4, 0.4]) mb.tube([x + dx - 0.03, y + 0.52, z], [x + dx + 0.03, y + 0.52, z], 0.285, lite ? 10 : 16);
-  mb.material(MAT.HULL, [0.9, 0.9, 0.87], 0.35);
+  for (const dx of [-0.42, 0.42]) mb.box([x + dx, y + 0.12, z], [1, 0, 0], [0, 1, 0], [0, 0, 1], 0.03, 0.12, 0.3, true);
   const cy = y + 0.52;
-  mb.tube([x - 0.62, cy, z], [x + 0.62, cy, z], 0.28, lite ? 10 : 16, true);
-  if (!lite) {
-    // end domes
-    for (const e of [-1, 1]) mb.tube([x + e * 0.62, cy, z], [x + e * 0.7, cy, z], 0.22, 14, true);
-  }
+  mb.material(MAT.PBR, [0.12, 0.12, 0.13], 0.8);
+  for (const dx of [-0.4, 0.4]) mb.tube([x + dx - 0.03, cy, z], [x + dx + 0.03, cy, z], 0.285, lite ? 8 : 12);
+  mb.material(MAT.HULL, [0.9, 0.9, 0.87], 0.35);
+  // capsule: cylinder with slightly narrower capped ends
+  const sides = lite ? 8 : 12;
+  mb.tube([x - 0.62, cy, z], [x + 0.62, cy, z], 0.28, sides);
+  for (const e of [-1, 1]) mb.tube([x + e * 0.62, cy, z], [x + e * 0.68, cy, z], 0.25, sides, true);
 }
 
 function cabin(mb, z0, z1, y0, y1, inset, windowBand, frontRake = 0, roofMat = MAT.DECK, roofCol = DECK_GREEN) {
