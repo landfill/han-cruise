@@ -484,7 +484,8 @@ function underBridge(p) {
 }
 
 function autoQuality(dt) {
-  if (state.quality !== 'auto' || shotMode) return;
+  // ?dynq: let the dynamic resolution run in a fixed scene too (measuring what it settles at)
+  if (state.quality !== 'auto' || (shotMode && !qs.has('dynq'))) return;
   dyn.timer += dt;
   if (dyn.timer < 1.5) return;
   dyn.timer = 0;
@@ -582,7 +583,7 @@ window.__app = {
     for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
     return btoa(s);
   },
-  stats: () => ({ ...renderer.stats, waterHeight: Array.from(renderer.stats.waterHeight), exposure: Array.from(renderer.stats.exposure), fps: fps.value, frameMs: fps.frameMs.slice(), errors: renderer.errors.slice(), boat: { s: boat.s, v: boat.v, x: boat.x, z: boat.z, heading: boat.heading }, load: window.__loadTimes, log: logLines.slice(-30) }),
+  stats: () => ({ ...renderer.stats, waterHeight: Array.from(renderer.stats.waterHeight), exposure: Array.from(renderer.stats.exposure), fps: fps.value, frameMs: fps.frameMs.slice(), errors: renderer.errors.slice(), dynScale: dyn.scale, boat: { s: boat.s, v: boat.v, x: boat.x, z: boat.z, heading: boat.heading }, load: window.__loadTimes, log: logLines.slice(-30) }),
   // render one frame with a fixed dt and return it as a JPEG (base64)
   stepJpeg: async (dt, quality = 0.9) => {
     const p = renderer.capture();

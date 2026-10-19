@@ -604,12 +604,31 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   let tsQuery = null, tsResolve = null, tsRead = null, tsPending = false;
   const timing = { gpuMs: 0 };
   let computeDesc = {};
+  // ?passprof (development): a begin/end timestamp pair around each pass group, read into
+  // stats.passMs. Slot 0 = start of the frame, 1 = end of the frame, groups from slot 2 on.
+  const PP_GROUPS = ['compute', 'shadow0', 'shadow1', 'shadow2', 'refl', 'reflMips', 'sky', 'main', 'bloom', 'composite'];
+  const passProf = hasTS && typeof location !== 'undefined' && /[?&]passprof/.test(location.search);
+  const TS_N = passProf ? 2 + PP_GROUPS.length * 2 : 2;
+  const ppMs = {};
+  const ppWritten = new Uint8Array(PP_GROUPS.length);
+  let ppReadMask = new Uint8Array(PP_GROUPS.length);
+  const ppSlot = (name) => 2 + PP_GROUPS.indexOf(name) * 2;
+  // set the timestamp writes of a pass descriptor: begin and/or end of the named group
+  function ppMark(desc, name, begin, end) {
+    if (!passProf) return desc;
+    const k = ppSlot(name);
+    const tw = { querySet: tsQuery };
+    if (begin) tw.beginningOfPassWriteIndex = k;
+    if (end) { tw.endOfPassWriteIndex = k + 1; ppWritten[PP_GROUPS.indexOf(name)] = 1; }
+    desc.timestampWrites = tw;
+    return desc;
+  }
   if (hasTS) {
-    tsQuery = device.createQuerySet({ type: 'timestamp', count: 2 });
-    tsResolve = buf(16, U.QUERY_RESOLVE | U.COPY_SRC, 'ts resolve');
-    tsRead = buf(16, U.MAP_READ | U.COPY_DST, 'ts read');
-    computeDesc = { timestampWrites: { querySet: tsQuery, beginningOfPassWriteIndex: 0 } };
-    compPass.timestampWrites = { querySet: tsQuery, endOfPassWriteIndex: 1 };
+    tsQuery = device.createQuerySet({ type: 'timestamp', count: TS_N });
+    tsResolve = buf(TS_N * 8, U.QUERY_RESOLVE | U.COPY_SRC, 'ts resolve');
+    tsRead = buf(TS_N * 8, U.MAP_READ | U.COPY_DST, 'ts read');
+    computeDesc = { timestampWrites: { querySet: tsQuery, beginningOfPassWriteIndex: 0, ...(passProf ? { endOfPassWriteIndex: ppSlot('compute') + 1 } : {}) } };
+    compPass.timestampWrites = { querySet: tsQuery, endOfPassWriteIndex: 1, ...(passProf ? { beginningOfPassWriteIndex: ppSlot('composite') } : {}) };
   }
 
   // ------------------------------------------------------------------------------------------
@@ -973,7 +992,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     if (env.shadows && env.sunDir[1] > -0.01 && !skip.shadow) {
       for (let c = 0; c < 3; c++) {
         if (!shadowUpdate[c]) continue;
-        const rp = enc.beginRenderPass(shadowPasses[c]);
+        const rp = enc.beginRenderPass(ppMark(shadowPasses[c], 'shadow' + c, true, true));
         const np = extractPlanes(shadowVP[c], planes, cam.pos[0], cam.pos[1], cam.pos[2], false);
         rp.setPipeline(P.meshShadow);
         rp.setBindGroup(0, bgShadow, [c * 256]);
@@ -989,7 +1008,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
 
     // ---------------- reflection ----------------
     if (!skip.refl && reflDue) {
-      const rp = enc.beginRenderPass(reflPass);
+      const rp = enc.beginRenderPass(ppMark(reflPass, 'refl', true, true));
       const np = extractPlanes(vpRefl, planes, reflCam[0], reflCam[1], reflCam[2], false);
       rp.setBindGroup(0, bgSceneRefl);
       if (nLandRefl) {
@@ -1009,7 +1028,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
         if (dynSpriteCount) { rp.setVertexBuffer(0, dynSpriteBuf); rp.draw(4, dynSpriteCount); }
       }
       rp.end();
-      const cpm = enc.beginComputePass();
+      const cpm = enc.beginComputePass(ppMark({}, 'reflMips', true, true));
       cpm.setPipeline(rgba16MipPipe);
       for (let m = 1; m < reflMips; m++) {
         const s = [Math.max(1, RW >> m), Math.max(1, RH >> m)];
@@ -1021,14 +1040,14 @@ export async function createRenderer({ device, context, format, canvas, data, ge
 
     // ---------------- sky (half resolution) ----------------
     if (!skip.sky) {
-      const sp = enc.beginRenderPass(skyPass);
+      const sp = enc.beginRenderPass(ppMark(skyPass, 'sky', true, true));
       sp.setPipeline(P.skyHalf); sp.setBindGroup(0, bgSceneSky); sp.draw(3);
       sp.end();
     }
 
     // ---------------- main ----------------
     {
-      const rp = enc.beginRenderPass(mainPass);
+      const rp = enc.beginRenderPass(ppMark(mainPass, 'main', true, true));
       const np = extractPlanes(vp, planes, cam.pos[0], cam.pos[1], cam.pos[2], false);
       rp.setBindGroup(0, bgSceneMain);
       rp.setPipeline(P.mesh.main);
@@ -1057,11 +1076,11 @@ export async function createRenderer({ device, context, format, canvas, data, ge
 
     // ---------------- post ----------------
     for (let m = 0; m < BLOOM_LEVELS; m++) {
-      const p = enc.beginRenderPass(downPasses[m]);
+      const p = enc.beginRenderPass(m === 0 ? ppMark(downPasses[m], 'bloom', true, false) : downPasses[m]);
       p.setPipeline(downPipe); p.setBindGroup(0, downBGs[m]); p.draw(3); p.end();
     }
     for (let i = 0; i < upPasses.length; i++) {
-      const p = enc.beginRenderPass(upPasses[i]);
+      const p = enc.beginRenderPass(i === upPasses.length - 1 ? ppMark(upPasses[i], 'bloom', false, true) : upPasses[i]);
       p.setPipeline(upPipe); p.setBindGroup(0, upBGs[i]); p.draw(3); p.end();
     }
     device.queue.writeBuffer(exposureUBO, 0, new Float32Array([state.resetExposure ? 0 : dt, env.exposureKey, env.exposureMin, env.exposureMax]));
@@ -1081,7 +1100,11 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     let doProbe = false, doTs = false, doEx = false;
     if (!probePending && (frameIndex & 3) === 0) { enc.copyBufferToBuffer(probeOut, 0, probeRead, 0, 16); doProbe = true; }
     if (!exposurePending && (frameIndex & 7) === 0) { enc.copyBufferToBuffer(exposureBuf, 0, exposureRead, 0, 8); doEx = true; }
-    if (hasTS && !tsPending && (frameIndex & 7) === 0) { enc.resolveQuerySet(tsQuery, 0, 2, tsResolve, 0); enc.copyBufferToBuffer(tsResolve, 0, tsRead, 0, 16); doTs = true; }
+    // every 7th frame: 7 is coprime with the reflection (2) and shadow cascade (2, 4) schedules, so
+    // the smoothed GPU time averages over all of their phases instead of always the same one
+    if (passProf) { ppWritten[0] = 1; ppWritten[PP_GROUPS.length - 1] = 1; }
+    if (hasTS && !tsPending && frameIndex % 7 === 0) { enc.resolveQuerySet(tsQuery, 0, TS_N, tsResolve, 0); enc.copyBufferToBuffer(tsResolve, 0, tsRead, 0, TS_N * 8); doTs = true; ppReadMask = ppWritten.slice(); }
+    ppWritten.fill(0);
     let readBuf = null, bpr = 0;
     if (shotRequest) {
       bpr = Math.ceil(W * 4 / 256) * 256;
@@ -1097,6 +1120,15 @@ export async function createRenderer({ device, context, format, canvas, data, ge
         const t = new BigUint64Array(tsRead.getMappedRange());
         const ms = Number(t[1] - t[0]) / 1e6;
         if (ms > 0 && ms < 1000) timing.gpuMs = timing.gpuMs ? timing.gpuMs * 0.8 + ms * 0.2 : ms;
+        if (passProf) {
+          // groups not drawn this frame (shadow cascades on their schedule, reflection) count as 0
+          PP_GROUPS.forEach((g, i) => {
+            // compute starts at the frame-start slot, the composite ends at the frame-end slot
+            const b0 = g === 'compute' ? t[0] : t[2 + i * 2], b1 = g === 'composite' ? t[1] : t[3 + i * 2];
+            const d = ppReadMask[i] ? Number(b1 - b0) / 1e6 : 0;
+            if (d >= 0 && d < 1000) ppMs[g] = ppMs[g] === undefined ? d : ppMs[g] * 0.9 + d * 0.1;
+          });
+        }
         tsRead.unmap(); tsPending = false;
       }, () => { tsPending = false; });
     }
@@ -1116,6 +1148,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       });
     }
     stats.gpuMs = timing.gpuMs; stats.W = W; stats.H = H;
+    if (passProf) stats.passMs = ppMs;
   }
 
   return {

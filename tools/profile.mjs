@@ -9,6 +9,7 @@ const opt = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i
 const scene = opt('scene', 'golden_city'), W = opt('w', 1920), H = opt('h', 1080);
 const groups = opt('groups', 'refl,shadow,water,meshes,terrain,trees,sky').split(',');
 const extra = opt('params', '');
+const URL0 = opt('url', 'http://127.0.0.1:5173/');
 
 const browser = await chromium.launch({
   channel: 'chrome', headless: true,
@@ -17,7 +18,7 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 
 async function measure(skip) {
-  await page.goto(`http://127.0.0.1:5173/?scene=${scene}&w=${W}&h=${H}&ui=0&mute&fixeddt${skip ? '&skip=' + skip : ''}${extra ? '&' + extra : ''}`);
+  await page.goto(`${URL0}?scene=${scene}&w=${W}&h=${H}&ui=0&mute&fixeddt${skip ? '&skip=' + skip : ''}${extra ? '&' + extra : ''}`);
   await page.waitForFunction(() => window.__app && window.__app.ready(), null, { timeout: 120000 });
   await page.waitForFunction(() => window.__app.frames() > 200, null, { timeout: 120000 });
   const f0 = await page.evaluate(() => [window.__app.frames(), performance.now()]);
