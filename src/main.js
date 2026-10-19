@@ -347,14 +347,21 @@ const probe = new Float32Array(8);
 let boatLightsW = new Float32Array(0);
 let frames = 0;
 
+// Phones and tablets (touch-only): a 3x panel at 2x is still ~300 ppi, which 4x MSAA makes
+// indistinguishable at arm's length, and it cuts the pixel count by more than half.
+// ?mobile=1 / ?mobile=0 forces the choice for testing.
+const MOBILE = qs.has('mobile') ? qs.get('mobile') === '1' : matchMedia('(hover: none) and (pointer: coarse)').matches;
+const MAX_DPR = MOBILE ? 2 : Infinity;
+const PIXEL_BUDGET = MOBILE ? 1.4e6 : 1920 * 1080;
+
 function renderSize() {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
   const fw = Number(qs.get('w')) || 0, fh = Number(qs.get('h')) || 0;
   if (fw && fh) return [fw, fh];
   const cw = canvas.clientWidth * dpr, ch = canvas.clientHeight * dpr;
   const q = QUALITY[state.quality === 'auto' ? 'high' : state.quality];
-  // cap at ~1920x1080 worth of pixels, then apply the quality scale and the dynamic scale
-  const cap = Math.min(1, Math.sqrt((1920 * 1080) / (cw * ch)));
+  // cap the pixel count (~1080p on desktop, ~1.4 MP on touch devices), then apply the quality scale and the dynamic scale
+  const cap = Math.min(1, Math.sqrt(PIXEL_BUDGET / (cw * ch)));
   const s = cap * q.scale * (state.quality === 'auto' ? dyn.scale : 1);
   return [Math.max(320, Math.round(cw * s)), Math.max(180, Math.round(ch * s))];
 }
@@ -484,7 +491,7 @@ function updateHUD(cam) {
   const st = renderer.stats;
   const ms = fps.frameMs.slice().sort((a, b) => a - b);
   const p95 = ms[Math.floor(ms.length * 0.95)] || 0;
-  $('perfLine').textContent = `${st.W}×${st.H} · ${fps.value.toFixed(0)} fps · GPU ${st.gpuMs.toFixed(1)} ms`;
+  $('perfLine').textContent = `${st.W}×${st.H} · ${fps.value.toFixed(0)} fps` + (renderer.hasTimestamps ? ` · GPU ${st.gpuMs.toFixed(1)} ms` : '');
   if (!$('devStats').hidden) {
     $('devStats').textContent = `${fps.value.toFixed(0)} fps  p95 ${p95.toFixed(1)} ms\nGPU ${st.gpuMs.toFixed(2)} ms\n${st.W}x${st.H} scale ${dyn.scale.toFixed(2)}\nwater ${st.waterNodes} land ${st.landNodes} meshes ${st.meshesDrawn}\ns ${boat.s.toFixed(0)} m  v ${boat.v.toFixed(2)} m/s\ncam ${cam.pos.map((v) => v.toFixed(1)).join(', ')}\nexp ${st.exposure[0].toFixed(3)} avgL ${st.exposure[1].toExponential(2)}\nsun ${env.sunElev.toFixed(1)}° az ${env.sunAzim.toFixed(0)}°`;
   }
