@@ -319,6 +319,8 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
+// the caption and settings panel sit above the toolbar, whose height changes when it wraps on phones
+new ResizeObserver(([e]) => document.documentElement.style.setProperty('--tb-h', e.target.offsetHeight + 'px')).observe($('toolbar'));
 $('startBtn').addEventListener('click', start);
 $('retryBtn').addEventListener('click', () => { if (state.started) location.reload(); else load(); });
 $('playBtn').addEventListener('click', togglePause);

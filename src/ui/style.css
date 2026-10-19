@@ -51,19 +51,19 @@ label.check input { width: 18px; height: 18px; accent-color: var(--accent); }
 #section .small { font-weight: 400; color: var(--ink-dim); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7); }
 #routeBar { margin-top: 6px; height: 3px; background: rgba(255, 255, 255, 0.25); border-radius: 2px; overflow: hidden; }
 #routeFill { height: 100%; width: 0; background: var(--ink); }
-#caption { position: fixed; left: 16px; bottom: 76px; z-index: 5; width: min(340px, calc(100% - 32px)); padding: 12px 14px;
+#caption { position: fixed; left: 16px; bottom: calc(var(--tb-h, 50px) + 26px + env(safe-area-inset-bottom)); z-index: 5; width: min(340px, calc(100% - 32px)); padding: 12px 14px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(6px);
   transition: opacity 0.6s; }
 #caption[hidden] { display: block; opacity: 0; pointer-events: none; }
 #caption p { margin: 4px 0 0; font-size: 13px; color: var(--ink-dim); }
-#toolbar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; display: flex; gap: 8px; align-items: center;
+#toolbar { position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 6; display: flex; gap: 8px; align-items: center;
   padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(8px);
   max-width: calc(100% - 16px); overflow-x: auto; }
 #toolbar .group { display: flex; gap: 2px; padding: 0 4px; border-left: 1px solid var(--line); }
 #toolbar .group button { border: none; }
 #toolbar button { white-space: nowrap; font-size: 14px; }
 #toolbar .ico { font-size: 11px; margin-right: 6px; }
-#settings { position: fixed; right: 14px; bottom: 70px; z-index: 7; width: 300px; padding: 14px; background: var(--panel-solid);
+#settings { position: fixed; right: 14px; bottom: calc(var(--tb-h, 50px) + 20px + env(safe-area-inset-bottom)); z-index: 7; width: min(300px, calc(100% - 28px)); padding: 14px; background: var(--panel-solid);
   border: 1px solid var(--line); border-radius: 10px; }
 #settings[hidden] { display: none; }
 #settings select { background: #1c2228; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; margin-left: 8px; }
@@ -76,9 +76,15 @@ label.check input { width: 18px; height: 18px; accent-color: var(--accent); }
   text-shadow: 0 1px 2px #000; white-space: pre; pointer-events: none; }
 #devStats[hidden] { display: none; }
 @media (max-width: 720px) {
+  /* narrow screens: the toolbar wraps onto rows instead of scrolling sideways */
   #toolbar .lbl { display: none; }
-  #toolbar { bottom: 8px; gap: 4px; }
-  #caption { bottom: 70px; }
+  #toolbar .ico { margin-right: 0; }
+  #toolbar { bottom: calc(8px + env(safe-area-inset-bottom)); gap: 4px; flex-wrap: wrap; justify-content: center;
+    width: calc(100% - 16px); overflow-x: visible; }
+  #toolbar .group { border-left: none; padding: 0; gap: 0; }
+  #toolbar button { padding: 6px 9px; }
+  #caption { bottom: calc(var(--tb-h, 50px) + 18px + env(safe-area-inset-bottom)); }
+  #settings { bottom: calc(var(--tb-h, 50px) + 16px + env(safe-area-inset-bottom)); max-height: calc(100% - var(--tb-h, 50px) - 90px); overflow-y: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   #caption, #fade, #loadBar { transition: none; }
