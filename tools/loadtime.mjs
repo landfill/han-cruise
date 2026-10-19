@@ -8,7 +8,7 @@ for (let i = 0; i < 3; i++) {
   const p = await b.newPage();
   const t0 = Date.now();
   await p.goto(url);
-  await p.waitForFunction(() => !document.getElementById('startBtn').disabled, null, { timeout: 120000 });
+  await p.waitForFunction(() => !document.getElementById('hud').hidden, null, { timeout: 120000 });
   const t = Date.now() - t0;
   const lt = await p.evaluate(() => window.__loadTimes);
   runs.push({ toReady: t, ...lt });

@@ -17,16 +17,14 @@
     <p class="eyebrow">서울 · 한강</p>
     <h1 id="title">한강 유람선</h1>
     <p class="lede">여의도 선착장을 떠나 원효대교와 한강철교 아래를 지나고, 노들섬 앞에서 돌아오는 약 4.2km의 항로입니다.</p>
-    <fieldset class="seg" id="todStart">
-      <legend>시간대</legend>
-      <label><input type="radio" name="tod" value="day"> <span>낮</span></label>
-      <label><input type="radio" name="tod" value="golden" checked> <span>골든아워</span></label>
-      <label><input type="radio" name="tod" value="night"> <span>야간</span></label>
-    </fieldset>
-    <label class="check"><input type="checkbox" id="soundStart" checked> <span>소리 켜기</span></label>
+    <ul class="presets" aria-label="출항 설정">
+      <li><span class="dot gold" aria-hidden="true"></span>골든아워</li>
+      <li><span class="dot sound" aria-hidden="true"></span>소리 켜짐</li>
+      <li><span class="dot route" aria-hidden="true"></span>약 16분 · 4.2km</li>
+    </ul>
     <div class="progress" role="progressbar" aria-labelledby="loadText" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="loadBar"></div></div>
     <p id="loadText" class="small" aria-live="polite">준비 중…</p>
-    <button id="startBtn" class="primary" disabled>항해 시작</button>
+    <p class="small hint">준비가 끝나면 자동으로 출항합니다. 시간대와 소리는 항해 중 아래 도구 막대에서 바꿀 수 있습니다.</p>
     <div id="loadError" class="error" hidden>
       <p id="loadErrorText"></p>
       <button id="retryBtn">다시 시도</button>
@@ -57,6 +55,7 @@
     <div id="routeBar" aria-hidden="true"><div id="routeFill"></div></div>
     <div id="minimap" aria-hidden="true"></div>
   </div>
+  <button id="soundHint" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h3l4-3v10l-4-3H2z" fill="currentColor"/><path d="M11 5.5c1 .8 1 4.2 0 5M12.8 3.8c2 1.8 2 6.6 0 8.4" stroke="currentColor" fill="none" stroke-width="1.3" stroke-linecap="round"/></svg>화면을 누르면 소리가 켜집니다</button>
   <div id="caption" hidden aria-live="polite"><strong id="capName"></strong><p id="capText"></p></div>
   <div id="toolbar" role="toolbar" aria-label="항해 조작">
     <button id="playBtn" aria-label="일시정지" title="일시정지 / 재개 (Space)"><span class="ico"></span><span class="lbl">일시정지</span></button>

@@ -26,6 +26,19 @@ button.primary:hover:not(:disabled) { background: #f0c174; }
 .screen { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
   background: radial-gradient(ellipse at 50% 30%, #1e2a33 0%, #0b0d10 70%); z-index: 20; }
 .screen[hidden] { display: none; }
+.screen.leaving { opacity: 0; transition: opacity 0.7s; pointer-events: none; }
+ul.presets { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 0 0 18px; }
+ul.presets li { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; color: var(--ink-dim); }
+ul.presets .dot { width: 8px; height: 8px; border-radius: 50%; }
+ul.presets .gold { background: var(--accent); }
+ul.presets .sound { background: #8fc1a9; }
+ul.presets .route { background: #7fa6c2; }
+p.hint { margin-top: 14px; }
+#soundHint { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 7; display: inline-flex; align-items: center; gap: 8px;
+  background: var(--panel); border-color: rgba(231, 178, 92, 0.6); border-radius: 999px; padding: 6px 14px; backdrop-filter: blur(6px); font-size: 14px;
+  animation: hintPulse 2.4s ease-in-out infinite; }
+#soundHint[hidden] { display: none; }
+@keyframes hintPulse { 50% { border-color: rgba(231, 178, 92, 0.15); } }
 .card { width: min(520px, 100%); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 14px; padding: 28px; }
 .eyebrow { margin: 0; letter-spacing: 0.2em; font-size: 12px; color: var(--accent); }
 h1 { margin: 4px 0 8px; font-size: 30px; letter-spacing: -0.01em; }
@@ -98,6 +111,7 @@ label.check input { width: 18px; height: 18px; accent-color: var(--accent); }
   text-shadow: 0 1px 2px #000; white-space: pre; pointer-events: none; }
 #devStats[hidden] { display: none; }
 @media (max-width: 720px) {
+  #soundHint { top: auto; bottom: calc(var(--tb-h, 50px) + 16px + env(safe-area-inset-bottom)); }
   /* narrow screens: the toolbar wraps onto rows instead of scrolling sideways */
   #toolbar .lbl { display: none; }
   #toolbar .ico { margin-right: 0; }
@@ -109,5 +123,6 @@ label.check input { width: 18px; height: 18px; accent-color: var(--accent); }
   #settings { bottom: calc(var(--tb-h, 50px) + 16px + env(safe-area-inset-bottom)); max-height: calc(100% - var(--tb-h, 50px) - 90px); overflow-y: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #caption, #fade, #loadBar { transition: none; }
+  #caption, #fade, #loadBar, .screen.leaving { transition: none; }
+  #soundHint { animation: none; }
 }

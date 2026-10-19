@@ -22,14 +22,21 @@ const check = (name, cond, detail = '') => { results.push({ name, ok: !!cond, de
   await page.goto(URL0);
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${OUT}/1_loading.png` });
-  await page.waitForFunction(() => !document.getElementById('startBtn').disabled, null, { timeout: 120000 });
-  check('start button enabled after loading', true, `${Date.now() - t0} ms`);
   check('start screen shows a fixed title', (await page.textContent('h1')) === '한강 유람선');
-  await page.screenshot({ path: `${OUT}/2_ready.png` });
-  await page.click('label:has-text("골든아워")');
-  await page.click('#startBtn');
-  await page.waitForFunction(() => !document.getElementById('hud').hidden, null, { timeout: 10000 });
-  check('HUD visible after start', true);
+  await page.waitForFunction(() => !document.getElementById('hud').hidden, null, { timeout: 120000 });
+  check('voyage starts by itself after loading', true, `${Date.now() - t0} ms`);
+  check('starts at golden hour', await page.getAttribute('[data-tod="golden"]', 'aria-pressed') === 'true');
+  check('sound is on by default', await page.getAttribute('#soundBtn', 'aria-pressed') === 'true');
+  await page.waitForTimeout(900);
+  check('start screen fades away', await page.evaluate(() => document.getElementById('start').hidden));
+  const blocked = await page.evaluate(() => window.__app.audio().state !== 'running');
+  if (blocked) {
+    check('muted-autoplay hint shown', await page.isVisible('#soundHint'));
+    await page.screenshot({ path: `${OUT}/2_sound_hint.png` });
+    await page.mouse.click(800, 450);
+    await page.waitForTimeout(400);
+    check('first click turns the sound on', await page.evaluate(() => window.__app.audio().state === 'running') && !(await page.isVisible('#soundHint')));
+  }
   await page.waitForTimeout(2500);
   const s0 = await page.evaluate(() => window.__app.stats().boat.s);
   await page.waitForTimeout(2000);
@@ -86,7 +93,7 @@ const check = (name, cond, detail = '') => { results.push({ name, ok: !!cond, de
   await page.screenshot({ path: `${OUT}/7_load_error.png` });
   block = false;
   await page.click('#retryBtn');
-  await page.waitForFunction(() => !document.getElementById('startBtn').disabled, null, { timeout: 120000 });
+  await page.waitForFunction(() => !document.getElementById('hud').hidden, null, { timeout: 120000 });
   check('retry recovers after the failure', true);
   await page.close();
 }
@@ -108,9 +115,7 @@ const check = (name, cond, detail = '') => { results.push({ name, ok: !!cond, de
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   await page.goto(URL0);
-  await page.waitForFunction(() => !document.getElementById('startBtn').disabled, null, { timeout: 120000 });
-  await page.screenshot({ path: `${OUT}/9_phone_start.png` });
-  await page.tap('#startBtn');
+  await page.waitForFunction(() => !document.getElementById('hud').hidden, null, { timeout: 120000 });
   await page.waitForTimeout(3000);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   check('phone: no horizontal page overflow', !overflow);

@@ -86,7 +86,6 @@ function buildingsInWorker(buffer) {
 
 async function load() {
   $('loadError').hidden = true;
-  $('startBtn').disabled = true;
   try {
     setProgress(0, '그래픽 장치 확인 중');
     if (!gpu) {
@@ -132,9 +131,7 @@ async function load() {
     for (let i = 0; i < 4; i++) { frame(performance.now(), true); await new Promise((r) => requestAnimationFrame(r)); }
     await gpu.device.queue.onSubmittedWorkDone();
     setProgress(1, '준비 완료');
-    $('startBtn').disabled = false;
-    $('startBtn').focus();
-    if (qs.has('autostart') || qs.has('scene')) start();
+    start();
   } catch (e) {
     log('load failed: ' + (e && e.stack || e));
     $('loadErrorText').textContent = '불러오기에 실패했습니다: ' + (e && e.message || e);
@@ -232,20 +229,46 @@ function applyScene(sc) {
 function start() {
   if (state.started) return;
   state.started = true;
-  state.tod = document.querySelector('input[name=tod]:checked')?.value || state.tod;
   if (shotMode) state.tod = shotMode.tod;
-  state.sound = $('soundStart').checked && !qs.has('mute') && !shotMode;
+  state.sound = state.sound && !shotMode;
   env = makeEnv(state.tod, shotMode?.env || {});
   if (qs.get('env')) for (const kv of qs.get('env').split(',')) { const [k, v] = kv.split(':'); env[k] = Number(v); }
   if (qs.get('skip')) env.skip = Object.fromEntries(qs.get('skip').split(',').map((k) => [k, true]));
-  $('start').hidden = true;
+  leaveStart();
   $('hud').hidden = !!(shotMode && qs.get('ui') !== '1');
   if (qs.get('ui') === '0') $('hud').hidden = true;
   syncUI();
   audio = new CruiseAudio();
-  if (state.sound) audio.start().catch((e) => log('audio: ' + e));
+  if (state.sound) startAudio();
   canvas.focus();
   resetExposure = true;
+}
+
+function leaveStart() {
+  const el = $('start');
+  if (state.reduced || shotMode) { el.hidden = true; return; }
+  el.classList.add('leaving');
+  setTimeout(() => { el.hidden = true; el.classList.remove('leaving'); }, 750);
+}
+
+// Browsers keep audio muted until the first click, tap or key press on the page: when that is
+// the case, show a hint and start the sound on the first interaction.
+let unlockArmed = false;
+function startAudio() {
+  audio.start().catch((e) => log('audio: ' + e));
+  if (audio.ctx && audio.ctx.state !== 'running' && !unlockArmed) {
+    unlockArmed = true;
+    $('soundHint').hidden = false;
+    const unlock = () => {
+      removeEventListener('pointerdown', unlock, true);
+      removeEventListener('keydown', unlock, true);
+      unlockArmed = false;
+      $('soundHint').hidden = true;
+      if (state.sound) audio.start().catch((e) => log('audio: ' + e));
+    };
+    addEventListener('pointerdown', unlock, true);
+    addEventListener('keydown', unlock, true);
+  }
 }
 
 function setTod(t) {
@@ -269,7 +292,7 @@ function fadeCut(fn) {
 function togglePause() { state.paused = !state.paused; syncUI(); }
 function toggleSound() {
   state.sound = !state.sound;
-  if (state.sound) audio.start().catch((e) => log('audio: ' + e)); else audio.stop();
+  if (state.sound) startAudio(); else { audio.stop(); $('soundHint').hidden = true; }
   syncUI();
 }
 function syncUI() {
@@ -323,7 +346,6 @@ addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
 // the caption and settings panel sit above the toolbar, whose height changes when it wraps on phones
 new ResizeObserver(([e]) => document.documentElement.style.setProperty('--tb-h', e.target.offsetHeight + 'px')).observe($('toolbar'));
-$('startBtn').addEventListener('click', start);
 $('retryBtn').addEventListener('click', () => { if (state.started) location.reload(); else load(); });
 $('playBtn').addEventListener('click', togglePause);
 $('soundBtn').addEventListener('click', toggleSound);
@@ -588,6 +610,5 @@ window.__app = {
 };
 
 requestAnimationFrame(loop);
-for (const r of document.querySelectorAll('input[name=tod]')) r.checked = r.value === state.tod;
 void PRESETS;
 load();
