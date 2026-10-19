@@ -73,6 +73,10 @@ function catmull(p0, p1, p2, p3, t) {
 
 // Boat kinematics along the path. Speed follows a target profile with limited
 // acceleration; heading lags the path tangent slightly (a real hull yaws, then tracks).
+// the approach profile brings the boat to rest 3 m before the end of the path; the voyage counts
+// as finished once it has stopped within this distance
+const BERTH = 3.5;
+
 export class Boat {
   constructor(path, opts) {
     this.path = path;
@@ -110,7 +114,7 @@ export class Boat {
     this.v = Math.min(this.targetSpeed(this.s), this.s < 1 ? 0 : 1e9);
     this.heading = p.heading; this.x = p.x; this.z = p.z;
     this.yawRate = p.curv * this.v;
-    this.finished = this.s >= this.path.length - 0.5;
+    this.finished = this.s >= this.path.length - BERTH;
   }
   update(dt, running) {
     const vt = running && !this.finished ? this.targetSpeed(this.s) : 0;
@@ -118,7 +122,7 @@ export class Boat {
     const a = dv > 0 ? this.accel : this.accel * 1.4;
     this.v += Math.sign(dv) * Math.min(Math.abs(dv), a * dt);
     this.s += this.v * dt;
-    if (this.s >= this.path.length - 0.5 && this.v < 0.05) this.finished = true;
+    if (this.s >= this.path.length - BERTH && this.v < 0.05) this.finished = true;
     const p = this.path.sample(this.s, this._tmp);
     this.x = p.x; this.z = p.z;
     // heading: critically damped follow of the path tangent

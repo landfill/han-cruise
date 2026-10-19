@@ -354,7 +354,8 @@ $('speedBtn').addEventListener('click', () => { state.speed = state.speed === 1 
 $('moreBtn').addEventListener('click', () => { const s = $('settings'); s.hidden = !s.hidden; $('moreBtn').setAttribute('aria-expanded', String(!s.hidden)); });
 $('reducedChk').addEventListener('change', (e) => { state.reduced = e.target.checked; });
 $('qualitySel').addEventListener('change', (e) => { state.quality = e.target.value; dyn.scale = 1; dyn.ceil = 1; });
-$('againBtn').addEventListener('click', () => { $('ended').hidden = true; fadeCut(() => { boat.place(0); boat.finished = false; resetPassTimes(0, 0); }); state.paused = false; syncUI(); });
+// hide the dialog only once the boat is back at the start, or the HUD update re-opens it mid-fade
+$('againBtn').addEventListener('click', () => { fadeCut(() => { boat.place(0); boat.finished = false; resetPassTimes(0, 0); $('ended').hidden = true; canvas.focus(); }); state.paused = false; syncUI(); });
 for (const b of document.querySelectorAll('[data-view]')) b.addEventListener('click', () => setView(b.dataset.view));
 for (const b of document.querySelectorAll('[data-tod]')) b.addEventListener('click', () => setTod(b.dataset.tod));
 if (DEV) $('devStats').hidden = false;
