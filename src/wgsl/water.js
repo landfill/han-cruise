@@ -166,20 +166,30 @@ fn reflUV(relp: vec3f) -> vec2f {
   let hit0 = textureSampleLevel(reflTex, sampC, uv0, 0.0);
   // distance from the surface to whatever the reflected ray hits (alpha = path length in the reflection pass)
   let camToP = length(relP);
-  let D = clamp(hit0.a - camToP, 2.0, 6000.0);
+  let D0 = clamp(hit0.a - camToP, 2.0, 6000.0);
+  // refine once: where the flat-mirror ray and the wave-tilted ray hit different things (bridge
+  // deck vs. the far bank under it), the first guess lands on the wrong object and copies chunks
+  // of the far lights into bridge-shaped blocks. Re-read the hit distance where it landed and keep
+  // the nearer of the two (a nearer hit occludes the farther one).
+  let uv1 = reflUV(relP + R * D0);
+  let D1 = clamp(textureSampleLevel(reflTex, sampC, clamp(uv1, vec2f(0.001), vec2f(0.999)), 0.0).a - camToP, 2.0, 6000.0);
+  let D = min(D0, D1);
   let uv = reflUV(relP + R * D);
   let pixW = 2.0 * length(F.camUp.xyz) * F.screen.w * 2.0;    // reflection texel angle (half res)
   // only the unresolved (sub-pixel) roughness blurs the reflection: resolved wave slopes are
   // already in the per-pixel reflection direction, which is what stretches lights into streaks
   let sigU = sqrt(max(unres + 0.5 * (aa.x + aa.y), 1e-7));
   let blurW = sigU * 2.0 * D / max(pixW * (D + camToP), 1e-5);
-  let lod = clamp(log2(max(blurW * 0.35, 1.0)), 0.0, min(F.misc.z - 1.0, 2.5));
+  var lod = clamp(log2(max(blurW * 0.35, 1.0)), 0.0, min(F.misc.z - 1.0, 2.5));
+  // at night, coarse mips turn small bright lights (distant shore lights seen under a bridge)
+  // into magnified squares that jump with the waves; cap the mip and blur with taps below instead
+  let nightW = smoothstep(0.3, 0.7, F.night.x);
+  lod = mix(lod, min(lod, 1.75), nightW);
   var refl = textureSampleLevel(reflTex, sampC, clamp(uv, vec2f(0.001), vec2f(0.999)), lod).rgb;
   // night: lamps are tiny bright points, so one reflection direction per pixel turns their
   // reflection into sparse dots that pop on and off as the ripples move. Average over slopes
   // tilted towards/away from the viewer (the direction that stretches lights into columns), so
   // the columns shimmer instead of flashing.
-  let nightW = smoothstep(0.3, 0.7, F.night.x);
   if (nightW > 0.0) {
     let spread = max(sigV, 0.025);
     var acc = refl;
@@ -189,7 +199,7 @@ fn reflUV(relp: vec3f) -> vec2f {
       var RK = reflect(-V, nK);
       RK.y = abs(RK.y);
       let uvK = reflUV(relP + normalize(RK) * D);
-      acc += textureSampleLevel(reflTex, sampC, clamp(uvK, vec2f(0.001), vec2f(0.999)), lod + 0.5).rgb;
+      acc += textureSampleLevel(reflTex, sampC, clamp(uvK, vec2f(0.001), vec2f(0.999)), lod).rgb;
     }
     refl = mix(refl, acc * 0.2, nightW);
   }
