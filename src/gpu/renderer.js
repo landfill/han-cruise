@@ -37,7 +37,7 @@ export const QUALITY = {
   high: { fftN: 256, shadow: 2048, reflScale: 0.5, scale: 1.0, treeDist: 2500, label: '높음' },
 };
 
-export async function createRenderer({ device, context, format, canvas, data, geom, quality = 'high', log = console.log }) {
+export async function createRenderer({ device, context, format, canvas, data, geom, quality = 'high', reflEvery = 1, log = console.log }) {
   const U = GU(), T = TU(), S = SS();
   const Q = { ...QUALITY[quality] };
   const N = Q.fftN;
@@ -547,6 +547,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   function resize(w, h) {
     if (w === W && h === H) return;
     W = w; H = h;
+    reflStale = true;
     for (const t of [colorMS, depthMS, hdrTex, bloomTex, reflTex, reflDepth, skyTex]) t && t.destroy();
     skyTex = device.createTexture({ size: [Math.max(1, W >> 1), Math.max(1, H >> 1)], format: HDR, usage: T.RENDER_ATTACHMENT | T.TEXTURE_BINDING });
     skyPass.colorAttachments[0].view = skyTex.createView();
@@ -675,6 +676,11 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   // stable (texel-snapped) orthographic cascades around the camera
   const shadowUpdate = [true, true, true];
   let lastEnvObj = null;
+  // planar reflection can be redrawn every Nth frame (mobile); in between, the last image is
+  // reprojected with the matrix it was rendered with, shifted by how far the camera moved
+  const reflMatLast = new Float32Array(16), reflMatUse = new Float32Array(16);
+  const reflCamLast = [0, 0, 0], reflFwdLast = [0, 0, 1];
+  let reflStale = true, reflDue = true;
   function buildShadows(cam, env) {
     const sd = env.sunDir;
     const L = [-sd[0], -sd[1], -sd[2]];
@@ -743,7 +749,16 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     // reflViewProj takes main-camera-relative points to the mirrored camera's clip space
     translation(tmpM2, 0, 2 * cam.pos[1], 0);
     mul(tmpM, vpRefl, tmpM2);
-    setMat(f, FRAME.reflViewProj, tmpM);
+    if (reflDue) {
+      reflMatLast.set(tmpM);
+      reflCamLast[0] = cam.pos[0]; reflCamLast[1] = cam.pos[1]; reflCamLast[2] = cam.pos[2];
+      reflFwdLast[0] = cam.fwd[0]; reflFwdLast[1] = cam.fwd[1]; reflFwdLast[2] = cam.fwd[2];
+      setMat(f, FRAME.reflViewProj, tmpM);
+    } else {
+      translation(tmpM2, cam.pos[0] - reflCamLast[0], cam.pos[1] - reflCamLast[1], cam.pos[2] - reflCamLast[2]);
+      mul(reflMatUse, reflMatLast, tmpM2);
+      setMat(f, FRAME.reflViewProj, reflMatUse);
+    }
     for (let c = 0; c < 3; c++) setMat(f, FRAME['shadowVP' + c], shadowVPUse[c]);
     set4(f, 'camPos', cam.pos[0], cam.pos[1], cam.pos[2], time);
     set4(f, 'camRight', cam.right[0] * tanX, cam.right[1] * tanX, cam.right[2] * tanX, 0);
@@ -882,6 +897,11 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     const fullShadow = frameIndex < 4 || env !== lastEnvObj;
     lastEnvObj = env;
     shadowUpdate[0] = true; shadowUpdate[1] = fullShadow || frameIndex % 2 === 0; shadowUpdate[2] = fullShadow || frameIndex % 4 === 1;
+    // redraw the reflection on schedule, or at once after a resize, a scene change or a camera cut/fast turn
+    const turn = cam.fwd[0] * reflFwdLast[0] + cam.fwd[1] * reflFwdLast[1] + cam.fwd[2] * reflFwdLast[2];
+    const moved = Math.hypot(cam.pos[0] - reflCamLast[0], cam.pos[1] - reflCamLast[1], cam.pos[2] - reflCamLast[2]);
+    reflDue = reflEvery <= 1 || reflStale || fullShadow || frameIndex % reflEvery === 0 || turn < 0.995 || moved > 2;
+    reflStale = false;
     writeFrames(cam, env, time);
     writeSim(env, time, dt);
     device.queue.writeBuffer(simUBO, 0, simF);
@@ -968,7 +988,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     }
 
     // ---------------- reflection ----------------
-    if (!skip.refl) {
+    if (!skip.refl && reflDue) {
       const rp = enc.beginRenderPass(reflPass);
       const np = extractPlanes(vpRefl, planes, reflCam[0], reflCam[1], reflCam[2], false);
       rp.setBindGroup(0, bgSceneRefl);

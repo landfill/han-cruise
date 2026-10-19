@@ -121,7 +121,7 @@ async function load() {
     const tGeom = performance.now();
     setProgress(0.8, '셰이더 준비 중');
     const q = state.quality === 'auto' ? 'high' : state.quality;
-    renderer = await createRenderer({ device: gpu.device, context, format, canvas, data, geom, quality: q, log });
+    renderer = await createRenderer({ device: gpu.device, context, format, canvas, data, geom, quality: q, reflEvery: Number(qs.get('refl')) || (MOBILE ? 2 : 1), log });
     const tGpu = performance.now();
     log(`load: data ${(tData - t0).toFixed(0)} ms, geometry ${(tGeom - tData).toFixed(0)} ms, gpu init ${(tGpu - tGeom).toFixed(0)} ms, buildings ${buildings.stats.buildings} (${buildings.stats.estimated} est.), ${(buildings.stats.tris / 1e6).toFixed(2)} M tris`);
     window.__loadTimes = { data: tData - t0, geometry: tGeom - tData, gpu: tGpu - tGeom, total: tGpu - t0 };
@@ -327,7 +327,7 @@ $('infoBtn').addEventListener('click', () => { state.info = !state.info; syncUI(
 $('speedBtn').addEventListener('click', () => { state.speed = state.speed === 1 ? 2 : state.speed === 2 ? 4 : 1; syncUI(); });
 $('moreBtn').addEventListener('click', () => { const s = $('settings'); s.hidden = !s.hidden; $('moreBtn').setAttribute('aria-expanded', String(!s.hidden)); });
 $('reducedChk').addEventListener('change', (e) => { state.reduced = e.target.checked; });
-$('qualitySel').addEventListener('change', (e) => { state.quality = e.target.value; dyn.scale = 1; });
+$('qualitySel').addEventListener('change', (e) => { state.quality = e.target.value; dyn.scale = 1; dyn.ceil = 1; });
 $('againBtn').addEventListener('click', () => { $('ended').hidden = true; fadeCut(() => { boat.place(0); boat.finished = false; resetPassTimes(0, 0); }); state.paused = false; syncUI(); });
 for (const b of document.querySelectorAll('[data-view]')) b.addEventListener('click', () => setView(b.dataset.view));
 for (const b of document.querySelectorAll('[data-tod]')) b.addEventListener('click', () => setTod(b.dataset.tod));
@@ -342,7 +342,8 @@ let lastCam = null;
 let resetExposure = true;
 let uiTimer = 0;
 const fps = { acc: 0, n: 0, t: 0, value: 0, frameMs: [] };
-const dyn = { scale: 1, timer: 0 };
+const dyn = { scale: 1, timer: 0, intervals: [], calm: 0, ceil: 1, ceilAge: 0 };
+const NO_TS = qs.has('nots');   // test the frame-time fallback on a browser that has GPU timestamps
 const probe = new Float32Array(8);
 let boatLightsW = new Float32Array(0);
 let frames = 0;
@@ -352,7 +353,7 @@ let frames = 0;
 // ?mobile=1 / ?mobile=0 forces the choice for testing.
 const MOBILE = qs.has('mobile') ? qs.get('mobile') === '1' : matchMedia('(hover: none) and (pointer: coarse)').matches;
 const MAX_DPR = MOBILE ? 2 : Infinity;
-const PIXEL_BUDGET = MOBILE ? 1.4e6 : 1920 * 1080;
+const PIXEL_BUDGET = Number(qs.get('budget')) || (MOBILE ? 1.4e6 : 1920 * 1080);
 
 function renderSize() {
   const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
@@ -366,9 +367,16 @@ function renderSize() {
   return [Math.max(320, Math.round(cw * s)), Math.max(180, Math.round(ch * s))];
 }
 
+// rolling CPU time per frame and frame intervals, shown in the settings panel (readable on a phone)
+const diag = { cpu: [], iv: [] };
+const roll = (a, x) => { a.push(x); if (a.length > 120) a.shift(); };
+
 function frame(now, warmup = false, dtOverride = 0) {
-  let dt = Math.min(0.1, (now - last) / 1000);
+  const tCpu = performance.now();
+  const rawMs = now - last;
+  let dt = Math.min(0.1, rawMs / 1000);
   last = now;
+  if (!warmup && rawMs < 100) dyn.intervals.push(rawMs);
   if (shotMode || qs.has('fixeddt')) dt = 1 / 60;
   if (dtOverride) dt = dtOverride;
   frames++;
@@ -433,6 +441,8 @@ function frame(now, warmup = false, dtOverride = 0) {
     if (uiTimer > 0.25) { uiTimer = 0; updateHUD(cam); }
     if (audio && state.sound) audio.update(dt, { speed: boat.v, underBridge: underBridge(cam.pos), paused: state.paused, night: env.darkness, reduced: state.reduced });
     autoQuality(dt);
+    if (rawMs < 100) roll(diag.iv, rawMs);
+    roll(diag.cpu, performance.now() - tCpu);
   }
 }
 
@@ -451,11 +461,33 @@ function autoQuality(dt) {
   dyn.timer += dt;
   if (dyn.timer < 1.5) return;
   dyn.timer = 0;
+  const iv = dyn.intervals;
+  dyn.intervals = [];
+  if (!renderer.hasTimestamps || NO_TS) { frameTimeQuality(iv); return; }
   const g = renderer.stats.gpuMs;
   if (!g) return;
   // keep GPU time under ~14 ms (60 Hz with headroom): pixel count scales roughly with time
   if (g > 14.5) dyn.scale = Math.max(0.6, dyn.scale * Math.sqrt(13 / g));
   else if (g < 10.5 && dyn.scale < 1) dyn.scale = Math.min(1, dyn.scale * 1.06);
+}
+
+// Without GPU timestamps (Safari): count frames that missed a 60 Hz refresh (> 25 ms apart).
+// Step down quickly when frames are dropped; step back up slowly, and not straight back to a
+// scale that just failed (that ceiling expires after 30 s, e.g. when the scene gets lighter).
+function frameTimeQuality(iv) {
+  if (iv.length < 20) return;
+  let missed = 0;
+  for (const x of iv) if (x > 25) missed++;
+  const r = missed / iv.length;
+  dyn.ceilAge += 1.5;
+  if (dyn.ceilAge > 30) dyn.ceil = 1;
+  if (r > 0.08) {
+    dyn.ceil = dyn.scale; dyn.ceilAge = 0; dyn.calm = 0;
+    dyn.scale = Math.max(0.6, dyn.scale * (r > 0.3 ? 0.85 : 0.93));
+  } else if (r < 0.01 && ++dyn.calm >= 3) {
+    dyn.calm = 0;
+    dyn.scale = Math.max(dyn.scale, Math.min(1, dyn.ceil * 0.97, dyn.scale * 1.04));
+  }
 }
 
 function updateHUD(cam) {
@@ -491,7 +523,11 @@ function updateHUD(cam) {
   const st = renderer.stats;
   const ms = fps.frameMs.slice().sort((a, b) => a - b);
   const p95 = ms[Math.floor(ms.length * 0.95)] || 0;
-  $('perfLine').textContent = `${st.W}×${st.H} · ${fps.value.toFixed(0)} fps` + (renderer.hasTimestamps ? ` · GPU ${st.gpuMs.toFixed(1)} ms` : '');
+  const cpu = diag.cpu.slice().sort((a, b) => a - b);
+  const cpuMed = cpu[cpu.length >> 1] || 0, cpuMax = cpu[cpu.length - 1] || 0;
+  const missed = diag.iv.length ? diag.iv.filter((x) => x > 25).length / diag.iv.length : 0;
+  $('perfLine').textContent = `${st.W}×${st.H} (${dyn.scale.toFixed(2)}) · ${fps.value.toFixed(0)} fps · 끊긴 프레임 ${(missed * 100).toFixed(0)}% · CPU ${cpuMed.toFixed(1)}/${cpuMax.toFixed(0)} ms`
+    + (renderer.hasTimestamps ? ` · GPU ${st.gpuMs.toFixed(1)} ms` : '');
   if (!$('devStats').hidden) {
     $('devStats').textContent = `${fps.value.toFixed(0)} fps  p95 ${p95.toFixed(1)} ms\nGPU ${st.gpuMs.toFixed(2)} ms\n${st.W}x${st.H} scale ${dyn.scale.toFixed(2)}\nwater ${st.waterNodes} land ${st.landNodes} meshes ${st.meshesDrawn}\ns ${boat.s.toFixed(0)} m  v ${boat.v.toFixed(2)} m/s\ncam ${cam.pos.map((v) => v.toFixed(1)).join(', ')}\nexp ${st.exposure[0].toFixed(3)} avgL ${st.exposure[1].toExponential(2)}\nsun ${env.sunElev.toFixed(1)}° az ${env.sunAzim.toFixed(0)}°`;
   }
