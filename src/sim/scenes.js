@@ -24,6 +24,8 @@ export const SCENES = {
   debug_ifc: { tod: 'day', s: 3300, view: 'bow', yawToAz: 255, pitch: 8, time: 40, fov: 20, desc: 'debug: IFC / Parc.1 zoomed' },
   debug_ifc_night: { tod: 'night', s: 3300, view: 'bow', yawToAz: 255, pitch: 8, time: 40, fov: 20, desc: 'debug: IFC / Parc.1 zoomed (night)' },
   debug_nodeul: { tod: 'day', s: 1960, view: 'bow', lookAt: [1050, 760], pitch: 2, time: 40, fov: 40, desc: 'debug: Nodeul island from the turn' },
+  nodeul_complex: { tod: 'day', s: 1960, view: 'bow', lookAt: [1150, 795], pitch: 1, time: 40, fov: 16, desc: '노들섬 복합문화공간 확대 (낮)' },
+  nodeul_complex_night: { tod: 'night', s: 1960, view: 'bow', lookAt: [1150, 795], pitch: 1, time: 40, fov: 16, desc: '노들섬 복합문화공간 확대 (야간)' },
   night_nodeul: { tod: 'night', s: 1960, view: 'bow', lookAt: [1050, 760], pitch: 2, time: 40, fov: 50, desc: '야간, 노들섬과 한강대교 아치' },
   night_wonhyo: { tod: 'night', s: 600, view: 'bow', pitch: 4, time: 40, desc: '야간, 원효대교 접근' },
   debug_bank: { tod: 'day', s: 1100, view: 'port', yaw: -90, pitch: -4, time: 40, fov: 35, desc: 'debug: Ichon bank close-up' },

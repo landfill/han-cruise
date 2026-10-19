@@ -9,6 +9,7 @@
 import earcut from 'earcut';
 import { MeshBuilder } from './meshbuilder.js';
 import { MAT } from '../wgsl/mesh.js';
+import { isNodeulComplex } from './nodeul.js';
 
 const TILE = 1000;
 const MATS = ['office', 'residential', 'house', 'glassBlue', 'glassDark', 'gold', 'parc1'];
@@ -71,6 +72,7 @@ export function buildBuildingMeshes(list) {
   const tiles = new Map();
   const lights = []; // aviation obstruction lights: x, y, z
   const stats = { buildings: 0, tris: 0, estimated: 0 };
+  const nodeul = [];
   for (const b of list) {
     const outer = b.rings.filter((r) => !r.inner);
     if (!outer.length) continue;
@@ -78,6 +80,13 @@ export function buildBuildingMeshes(list) {
     let cx = 0, cz = 0;
     for (let i = 0; i < p0.length; i += 2) { cx += p0[i]; cz += p0[i + 1]; }
     cx /= p0.length / 2; cz /= p0.length / 2;
+    // the Nodeul island complex is rebuilt as stepped masses in src/scene/nodeul.js
+    if (isNodeulComplex(cx, cz, b.h)) {
+      const ring = [];
+      for (let i = 0; i < p0.length; i += 2) ring.push([p0[i], p0[i + 1]]);
+      nodeul.push({ ring, base: b.base, h: b.h });
+      continue;
+    }
     const key = Math.floor(cx / TILE) + ',' + Math.floor(cz / TILE);
     if (!tiles.has(key)) tiles.set(key, new MeshBuilder(8192));
     const mb = tiles.get(key);
@@ -278,5 +287,5 @@ export function buildBuildingMeshes(list) {
     stats.tris += r.icount / 3;
     meshes.push({ key, ...r });
   }
-  return { meshes, lights: new Float32Array(lights), stats };
+  return { meshes, lights: new Float32Array(lights), stats, nodeul };
 }

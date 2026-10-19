@@ -278,7 +278,7 @@ function truss(mb, fr, br, continuous) {
   }
 }
 
-function archSpans(mb, fr, br, lights, spans, rise, planesOff) {
+function archSpans(mb, fr, br, lights, spans, rise, planesOff, led = null) {
   mb.material(MAT.STEEL, ARCH_STEEL, 0.45, 0.2);
   for (const [sA, sB] of spans) {
     const span = sB - sA;
@@ -300,8 +300,17 @@ function archSpans(mb, fr, br, lights, spans, rise, planesOff) {
     }
     // wind bracing between the ribs near the crown
     for (let i = 4; i <= segs - 4; i += 2) mb.beam(nodes[-1][i], nodes[1][i], 0.4, 0.5);
+    if (led) {
+      // LED line along the top of each rib (the arches are outlined in light at night)
+      mb.material(MAT.LAMP, led, 0.5, 0, 0, 0.35);
+      for (const side of [-1, 1]) for (let i = 0; i < segs; i++) {
+        const a = nodes[side][i], b = nodes[side][i + 1];
+        mb.beam([a[0], a[1] + 0.58, a[2]], [b[0], b[1] + 0.58, b[2]], 0.18, 0.06, fr.n);
+      }
+      mb.material(MAT.STEEL, ARCH_STEEL, 0.45, 0.2);
+    }
     // floodlit arches at night: a few soft lights along the ribs
-    for (const side of [-1, 1]) for (let i = 2; i < segs; i += 3) {
+    for (const side of [-1, 1]) for (let i = 2; i < segs; i += led ? 2 : 3) {
       const p = nodes[side][i];
       lights.push(p[0], p[1] + 0.8, p[2], 0.25, 0.85, 0.9, 1.0, -10);
     }
@@ -337,7 +346,7 @@ export function buildBridges(bridges) {
         const p = br.piers.filter((s) => s >= br.water[0] - 1 && s <= br.water[1] + 1);
         const spans = [];
         for (let k = 0; k < p.length - 1; k++) spans.push([p[k], p[k + 1]]);
-        archSpans(mb, fr, br, lights, spans, 11, br.deckW / 2 - 0.8);
+        archSpans(mb, fr, br, lights, spans, 11, br.deckW / 2 - 0.8, [0.85, 0.92, 1.0]);
       }
     }
     const roadBridge = !br.type.startsWith('truss');

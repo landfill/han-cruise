@@ -434,6 +434,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   {
     const parts = [...geom.buildings.meshes.map((m) => [m, 'building']), [geom.bridges.mesh, 'bridge'], [geom.viaducts.mesh, 'bridge'], [geom.landmarks.mesh, 'landmark']];
     if (geom.misc) parts.push([geom.misc, 'misc']);
+    if (geom.nodeul) parts.push([geom.nodeul.mesh, 'misc']);
     let vbytes = 0, icount = 0;
     for (const [m] of parts) { vbytes += m.vertices.byteLength; icount += m.icount; }
     const vAll = new Uint8Array(vbytes), iAll = new Uint32Array(icount);
@@ -495,6 +496,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   pushArr(geom.bridges.lights);
   pushArr(geom.viaducts.lights);
   pushArr(geom.landmarks.lights);
+  if (geom.nodeul) pushArr(geom.nodeul.lights);
   const av = geom.buildings.lights;
   for (let i = 0; i < av.length; i += 3) staticLights.push(av[i], av[i + 1], av[i + 2], 0.25, 1.0, 0.06, 0.03, -10);
   const staticSpriteBuf = upload(new Float32Array(staticLights), U.VERTEX, 'static lights');

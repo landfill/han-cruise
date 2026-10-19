@@ -92,6 +92,7 @@ fn landClass(xz: vec2f) -> u32 {
   let stepK = in.world.y / 0.4;
   let fwStep = fwidth(stepK);
   let cls = landClass(xz);
+  let onNodeul = all(xz > vec2f(820.0, 630.0)) && all(xz < vec2f(1500.0, 1010.0));
 
   // ---- material ----
   let det = textureSample(detailTex, sampR, xz * 0.21).r;   // fine detail (1/0.21 m tiles)
@@ -117,12 +118,13 @@ fn landClass(xz: vec2f) -> u32 {
   if (d < 5.5 && d > -6.0) {
     let band = 1.0 - smoothstep(4.6, 5.4, d);
     revBand = band;
-    let stepped = smoothstep(0.52, 0.56, textureSampleLevel(detailTex, sampR, xz * 0.0011, 0.0).b);
+    // Nodeul island keeps a natural riprap edge with grass and reeds in the joints all round
+    let stepped = select(smoothstep(0.52, 0.56, textureSampleLevel(detailTex, sampR, xz * 0.0011, 0.0).b), 0.0, onNodeul);
     // riprap: dark grey stones, bumpy, weeds and dry grass in the joints higher up
     let rg = vec2f(textureSampleLevel(detailTex, sampR, (xz + vec2f(0.25, 0.0)) * 0.55, rockLod).g - rock,
                    textureSampleLevel(detailTex, sampR, (xz + vec2f(0.0, 0.25)) * 0.55, rockLod).g - rock);
     var stone = vec3f(0.20, 0.195, 0.18) * (0.5 + 0.7 * rock);
-    let weeds = smoothstep(0.55, 0.75, det2 + 0.25 * det) * smoothstep(0.8, 1.6, in.world.y) * (1.0 - rock * 0.8);
+    let weeds = smoothstep(select(0.55, 0.35, onNodeul), 0.75, det2 + 0.25 * det) * smoothstep(0.8, 1.6, in.world.y) * (1.0 - rock * 0.8);
     stone = mix(stone, mix(vec3f(0.07, 0.10, 0.04), vec3f(0.20, 0.18, 0.10), det), weeds);
     let nRip = normalize(n + vec3f(-rg.x, 0.0, -rg.y) * 1.6 * (1.0 - stepped));
     // steps: treads face up, risers face the water
@@ -154,7 +156,8 @@ fn landClass(xz: vec2f) -> u32 {
   s.albedo = alb; s.rough = rough; s.metal = 0.0; s.f0 = vec3f(0.035); s.emit = vec3f(0.0); s.ao = 1.0;
   // street/park light pools on paths and roads at night
   // (not on the revetment slope below the promenade, which the lamps barely reach)
-  if (cls == 3u || cls == 6u || cls == 7u) { s.emit = alb * vec3f(1.0, 0.75, 0.5) * F.night.y * 0.006 * (1.0 - revBand); }
+  // (the island path is lit only by its own sparse promenade lamps)
+  if (cls == 3u || cls == 6u || cls == 7u) { s.emit = alb * vec3f(1.0, 0.75, 0.5) * F.night.y * 0.006 * (1.0 - revBand) * select(1.0, 0.35, onNodeul); }
   var col = shade(s, nn, in.rel, in.world);
   col = applyFog(col, in.rel);
   return vec4f(col, select(1.0, length(in.rel), isReflPass()));

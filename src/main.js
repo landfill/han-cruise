@@ -2,6 +2,7 @@
 import { loadScene } from './scene/loader.js';
 import { buildBridges, buildViaducts } from './scene/bridges.js';
 import { buildBoat, BOAT } from './scene/boat.js';
+import { buildNodeul, editNodeulTrees } from './scene/nodeul.js';
 import { buildLandmarks } from './scene/landmarks.js';
 import { buildTreeTemplate } from './scene/trees.js';
 import { buildPiers } from './scene/piers.js';
@@ -109,10 +110,12 @@ async function load() {
     const bridges = buildBridges(data.meta.bridges);
     const viaducts = buildViaducts(data.meta.viaducts || []);
     const boatGeo = buildBoat({ lite: MOBILE });
+    const nodeul = buildNodeul({ meta: data.meta, sdf: data.sdf, complexList: buildings.nodeul, lite: MOBILE });
+    if (!data.treesEdited) { data.trees = editNodeulTrees(data.trees, nodeul.treeRow); data.treesEdited = true; }
     boatGeo.dims = { length: BOAT.length, beam: BOAT.beam, draft: BOAT.draft };
     path = new Path(ROUTE_POINTS, 2);
     geom = {
-      path, buildings, bridges, viaducts, boat: boatGeo,
+      path, buildings, bridges, viaducts, boat: boatGeo, nodeul,
       landmarks: buildLandmarks(data.meta.landmarks),
       misc: buildPiers(data.meta.piers),
       treeTemplate: buildTreeTemplate(),
