@@ -3,12 +3,12 @@
 //   3. scene data fails to load -> error + retry recovers   4. no WebGPU -> unsupported notice
 //   5. phone-sized viewport with touch
 import fs from 'node:fs';
-import { chromium } from 'playwright-core';
+import { launch } from './browser.mjs';
 
 const OUT = 'captures/ui';
 fs.mkdirSync(OUT, { recursive: true });
 const URL0 = process.argv[2] || 'http://127.0.0.1:5173/';
-const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--enable-unsafe-webgpu', '--autoplay-policy=no-user-gesture-required'] });
+const browser = await launch({ headless: true, args: ['--enable-unsafe-webgpu', '--autoplay-policy=no-user-gesture-required'] });
 const results = [];
 const check = (name, cond, detail = '') => { results.push({ name, ok: !!cond, detail }); console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); };
 
