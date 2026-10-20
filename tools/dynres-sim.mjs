@@ -174,6 +174,6 @@ console.log('| GPU 시간 측정 | 화면 | 기기 배율 F | 크기 변경/분 
 console.log('|---|---|---|---|---|---|---|---|---|');
 for (const r of rows) {
   const o = r.old, n = r.new;
-  console.log(`| ${r.hasTS ? '타임스탬프' : '프레임 간격'} | ${r.hz} Hz | ${r.F} | ${f1(o.resizesPerMin)} → ${f1(n.resizesPerMin)} | ${f0(o.fps)} → ${f0(n.fps)} | ${f1(o.uneven)} → ${f1(n.uneven)} | ${f0(o.hitch50)} → ${f0(n.hitch50)} | ${o.pixels.toFixed(2)} → ${n.pixels.toFixed(2)} | ${f0(n.at30)} |`);
+  console.log(`| ${r.hasTS ? '타임스탬프' : '타임스탬프 없음'} | ${r.hz} Hz | ${r.F} | ${f1(o.resizesPerMin)} → ${f1(n.resizesPerMin)} | ${f0(o.fps)} → ${f0(n.fps)} | ${f1(o.uneven)} → ${f1(n.uneven)} | ${f0(o.hitch50)} → ${f0(n.hitch50)} | ${o.pixels.toFixed(2)} → ${n.pixels.toFixed(2)} | ${f0(n.at30)} |`);
 }
 if (OUTF) fs.writeFileSync(OUTF, JSON.stringify({ seconds: SECONDS, seeds: SEEDS, resizeMs: RESIZE_MS, rows }, null, 1));
