@@ -173,16 +173,35 @@ export function paceDue(now, lastRender, pace, vsyncMs) {
   return now - lastRender >= periodMs(pace, v) - v * 0.5;
 }
 
-// Screen refresh interval from the intervals between rAF callbacks (they come every refresh,
-// rendered or not). A shorter interval is adopted at once. A longer one is ambiguous: the screen
-// may have slowed down (power saving), or the browser is skipping callbacks because the GPU is
-// behind, and then every interval is two refreshes long. Taking that for a 30 Hz screen would
-// double the frame budget and keep the overloaded level, so a longer interval is adopted only
-// after LONGER_FOR seconds, and only while the GPU time is clearly below the current interval
-// (a GPU that keeps up cannot be the reason callbacks are skipped). An interval that stays too
-// short is harmless: the pace still rounds up to ~16 ms or more. `guarded: false` takes every
-// window's value as is (the first version; kept for tools/dynres-sim.mjs).
+// Screen refresh interval from the intervals between rAF callbacks. Callbacks come on refresh
+// boundaries, so every interval is a whole number of refreshes; when the GPU is behind, the
+// browser skips callbacks and some intervals are two or more refreshes long. The refresh period is
+// therefore the longest standard period (165 ... 30 Hz) that the intervals of a window are whole
+// multiples of: 25 and 33 ms intervals can only come from a 120 Hz screen, 17 and 33 ms ones from
+// 60 Hz (or from 120 Hz showing every 2nd refresh, which paces the same).
+// A shorter period is adopted at once. A longer one must hold for LONGER_FOR seconds, and if the
+// window does not show both one-refresh and longer intervals it also needs the GPU time well
+// below it: a GPU at 31 ms on a 60 Hz screen makes every interval 33 ms,
+// which must not be taken for a 30 Hz screen (that would double the frame budget and keep the
+// overloaded level). `guarded: false` takes the lower quartile of each window as is (the first
+// version; kept for tools/dynres-sim.mjs).
 const LONGER_FOR = 30;
+const RATES = [30, 48, 50, 60, 72, 75, 90, 100, 120, 144, 165];   // Hz, longest period first
+// longest standard period with >= 90% of the intervals within tolerance of a whole multiple
+function refreshPeriod(iv) {
+  for (const hz of RATES) {
+    const R = 1000 / hz, tol = Math.max(0.6, R * 0.04);
+    let ok = 0, one = 0;
+    for (const d of iv) {
+      const k = Math.round(d / R);
+      if (k >= 1 && Math.abs(d - k * R) <= tol) { ok++; if (k === 1) one++; }
+    }
+    // ambiguous: not both one-refresh and longer intervals (which would prove callbacks can come
+    // every R and that some were skipped)
+    if (ok >= iv.length * 0.9) return { R, ambiguous: one === ok || one === 0 };
+  }
+  return null;
+}
 export function createRefreshEstimator({ initial = 1000 / 60, window = 64, guarded = true } = {}) {
   const buf = new Float64Array(window);
   let n = 0, est = initial, longerSince = -1;
@@ -190,16 +209,20 @@ export function createRefreshEstimator({ initial = 1000 / 60, window = 64, guard
     get ms() { return est; },
     // d: ms since the previous rAF callback; now: seconds; gpuMs: current GPU time estimate (0 = none)
     add(d, now, gpuMs) {
-      if (!(d > 2 && d < 50)) return;
+      if (!(d > 2 && d < 70)) return;
       buf[n++] = d;
       if (n < buf.length) return;
       n = 0;
-      // lower quartile: occasional skipped callbacks only lengthen some intervals
-      const q = Math.min(34, Math.max(4, buf.slice().sort()[buf.length >> 2]));
-      if (!guarded) { est = q; return; }
-      if (q <= est * 1.25) { est = Math.min(est, q); longerSince = -1; return; }
+      if (!guarded) { est = Math.min(34, Math.max(4, buf.slice().sort()[buf.length >> 2])); return; }
+      const f = refreshPeriod(buf);
+      if (!f) return;                                    // no consistent period in this window
+      if (f.R <= est * 1.05) { est = f.R; longerSince = -1; return; }
       if (longerSince < 0) longerSince = now;
-      if (now - longerSince >= LONGER_FOR && gpuMs > 0 && gpuMs < est * 0.8) { est = q; longerSince = -1; }
+      if (now - longerSince < LONGER_FOR) return;
+      // e.g. every interval 33 ms: a 30 Hz screen, or a 60 Hz one with every 2nd callback skipped;
+      // only a GPU well below the period rules out the second
+      if (f.ambiguous && !(gpuMs > 0 && gpuMs < f.R * 0.8)) return;
+      est = f.R; longerSince = -1;
     },
   };
 }
