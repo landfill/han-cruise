@@ -34,7 +34,7 @@ async function measure(base, sc) {
   await page.goto(`${base}${base.includes('?') ? '&' : '?'}scene=${sc}&${size}&ui=0&mute&fixeddt${params ? '&' + params : ''}`);
   await page.waitForFunction(() => window.__app && window.__app.ready(), null, { timeout: 120000 });
   // dynamic mode: give the resolution controller time to settle (it steps every 1.5 s of sim time)
-  await page.waitForFunction((n) => window.__app.frames() > n, dynMode ? 900 : 120, { timeout: 180000 });
+  await page.waitForFunction((n) => window.__app.frames() > n, dynMode ? 900 : 120, { timeout: 300000 });
   const ms = await page.evaluate(async () => {
     const t = []; let last = performance.now(); const end = last + 3000;
     await new Promise((res) => { const f = (now) => { t.push(now - last); last = now; if (now < end) requestAnimationFrame(f); else res(); }; requestAnimationFrame(f); });
@@ -49,7 +49,9 @@ for (let r = 0; r < rounds; r++) {
   for (const sc of scenes) {
     const order = r % 2 === 0 ? [['a', A], ['b', B]] : [['b', B], ['a', A]];
     for (const [k, url] of order) {
-      const m = await measure(url, sc);
+      // one retry: a page can stall now and then on the throttled laptop (headless tab hiccup)
+      let m;
+      try { m = await measure(url, sc); } catch (e) { console.log(`  retry ${sc} (${e.name})`); m = await measure(url, sc); }
       ((runs[sc] ||= { a: [], b: [] })[k]).push(m);
     }
     const ra = runs[sc].a.at(-1), rb = runs[sc].b.at(-1);
