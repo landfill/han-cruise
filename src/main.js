@@ -366,6 +366,9 @@ $('moreBtn').addEventListener('click', () => { const s = $('settings'); s.hidden
 $('reducedChk').addEventListener('change', (e) => { state.reduced = e.target.checked; });
 $('qualitySel').addEventListener('change', (e) => {
   state.quality = e.target.value; dyn.scale = 1; dyn.ceil = 1;
+  // a fresh decision window: samples taken at the previous render size do not apply
+  dyn.timer = 0; dyn.intervals.length = 0;
+  if (renderer) renderer.takeDoneTimes();
   if (dynCtl) dynCtl = createDynRes({ hasTimestamps: renderer.hasTimestamps && !NO_TS });
 });
 // hide the dialog only once the boat is back at the start, or the HUD update re-opens it mid-fade
@@ -518,7 +521,7 @@ function underBridge(p) {
 
 function autoQuality(dt) {
   // ?dynq: let the dynamic resolution run in a fixed scene too (measuring what it settles at)
-  if (state.quality !== 'auto' || (shotMode && !DYNQ)) { dyn.intervals.length = 0; return; }
+  if (state.quality !== 'auto' || (shotMode && !DYNQ)) { dyn.intervals.length = 0; renderer.takeDoneTimes(); return; }
   dyn.timer += dt;
   if (dynCtl) {
     if (dyn.timer < WINDOW) return;
