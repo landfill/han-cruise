@@ -32,7 +32,7 @@ const SLOW_AT = 1.3;
 const LATE_DOWN = 0.05;              // share of frames a refresh late that counts as over budget
 const SLOW_LATE = 0.25;              // ... and that slows the pace at the lowest level (fallback path)
 const SLOW_RETRY = [20, 40, 80, 160];// seconds before retrying the normal pace (fallback path)
-// No slow pace on screens of 100 Hz and more: their refreshes are so close together that a frame
+// No slow pace on screens of 100 Hz and more (refresh interval 10 ms or less): their refreshes are so close together that a frame
 // needing ~22-26 ms lands on different refreshes (25 or 33 ms on 120 Hz), so 30 fps wobbles about
 // as much as the normal pace does, at a lower frame rate (tools/dynres-sim.mjs).
 const SLOW_MIN_VSYNC = 10;
@@ -80,7 +80,7 @@ export function createDynRes({ hasTimestamps }) {
     const B = periodMs(st.pace, v) * BUDGET;
     if (g > B * 1.1) {
       st.failedAt[st.level] = now;
-      if (st.pace === 1 && v >= SLOW_MIN_VSYNC && at(FLOOR, g) > periodMs(1, v) * SLOW_AT) {
+      if (st.pace === 1 && v > SLOW_MIN_VSYNC && at(FLOOR, g) > periodMs(1, v) * SLOW_AT) {
         // even the lowest level misses the normal pace by far: slow down and pick the level for that
         const B2 = periodMs(2, v) * BUDGET;
         let k = 0;
@@ -125,7 +125,7 @@ export function createDynRes({ hasTimestamps }) {
     if (r > LATE_DOWN) {
       st.failedAt[st.level] = now;
       if (st.level === FLOOR) {
-        if (st.pace === 1 && v >= SLOW_MIN_VSYNC && r > SLOW_LATE) { st.slowCount++; st.normalFailedAt = now; setPace(2, now); }
+        if (st.pace === 1 && v > SLOW_MIN_VSYNC && r > SLOW_LATE) { st.slowCount++; st.normalFailedAt = now; setPace(2, now); }
         st.calm = 0;
         return;
       }
@@ -204,7 +204,7 @@ function refreshPeriod(iv) {
 }
 export function createRefreshEstimator({ initial = 1000 / 60, window = 64, guarded = true } = {}) {
   const buf = new Float64Array(window);
-  let n = 0, est = initial, longerSince = -1;
+  let n = 0, est = initial, longerSince = -1, longerR = 0;
   return {
     get ms() { return est; },
     // d: ms since the previous rAF callback; now: seconds; gpuMs: current GPU time estimate (0 = none)
@@ -215,9 +215,11 @@ export function createRefreshEstimator({ initial = 1000 / 60, window = 64, guard
       n = 0;
       if (!guarded) { est = Math.min(34, Math.max(4, buf.slice().sort()[buf.length >> 2])); return; }
       const f = refreshPeriod(buf);
-      if (!f) return;                                    // no consistent period in this window
+      // no consistent period in this window: a longer period has to start holding again
+      if (!f) { longerSince = -1; return; }
       if (f.R <= est * 1.05) { est = f.R; longerSince = -1; return; }
-      if (longerSince < 0) longerSince = now;
+      // the same longer period, window after window, for LONGER_FOR seconds
+      if (longerSince < 0 || f.R !== longerR) { longerSince = now; longerR = f.R; }
       if (now - longerSince < LONGER_FOR) return;
       // e.g. every interval 33 ms: a 30 Hz screen, or a 60 Hz one with every 2nd callback skipped;
       // only a GPU well below the period rules out the second
