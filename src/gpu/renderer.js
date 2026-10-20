@@ -558,6 +558,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
 
   function resize(w, h) {
     if (w === W && h === H) return;
+    if (W) stats.resizes++;   // size changes after the first allocation
     W = w; H = h;
     reflStale = true;
     targetGen++;
@@ -921,7 +922,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   // ------------------------------------------------------------------------------------------
   const objF = new Float32Array(20);
   let shotRequest = null;
-  const stats = { gpuMs: 0, waterNodes: 0, landNodes: 0, meshesDrawn: 0, W: 0, H: 0, waterHeight: waterH, exposure: exposureVal };
+  let doneTimes = null;
+  const stats = { gpuMs: 0, waterNodes: 0, landNodes: 0, meshesDrawn: 0, W: 0, H: 0, resizes: 0, waterHeight: waterH, exposure: exposureVal };
 
   function render(state) {
     const { cam, env, time, dt, boatMatrix, dynLights } = state;
@@ -1141,6 +1143,10 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       enc.copyTextureToBuffer({ texture: swapTex }, { buffer: readBuf, bytesPerRow: bpr }, [W, H]);
     }
     device.queue.submit([enc.finish()]);
+    if (doneTimes) {
+      const t0 = performance.now();
+      device.queue.onSubmittedWorkDone().then(() => { if (doneTimes && doneTimes.length < 256) doneTimes.push(performance.now() - t0); });
+    }
     if (doProbe) { probePending = true; probeRead.mapAsync(GPUMapMode.READ).then(() => { waterH.set(new Float32Array(probeRead.getMappedRange(0, 16))); probeRead.unmap(); probePending = false; }, () => { probePending = false; }); }
     if (doEx) { exposurePending = true; exposureRead.mapAsync(GPUMapMode.READ).then(() => { exposureVal.set(new Float32Array(exposureRead.getMappedRange(0, 8))); exposureRead.unmap(); exposurePending = false; }, () => { exposurePending = false; }); }
     if (doTs) {
@@ -1182,6 +1188,9 @@ export async function createRenderer({ device, context, format, canvas, data, ge
 
   return {
     render, stats, errors, quality: Q, hasTimestamps: hasTS,
+    // per-frame submit -> onSubmittedWorkDone times (ms), for browsers without GPU timestamps
+    collectDoneTimes: (on) => { doneTimes = on ? [] : null; },
+    takeDoneTimes: () => { if (!doneTimes) return null; const d = doneTimes; doneTimes = []; return d; },
     capture: () => new Promise((res) => { shotRequest = res; }),
     resetEnv: () => { envFull = 3; },
   };

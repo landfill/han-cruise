@@ -18,6 +18,7 @@ import { CruiseAudio } from './audio/audio.js';
 import { routeSections } from './sim/sections.js';
 import { SCENES } from './sim/scenes.js';
 import { createMinimap } from './ui/minimap.js';
+import { createDynRes, paceDue, periodMs, WINDOW } from './sim/dynres.js';
 
 const qs = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -127,6 +128,11 @@ async function load() {
     setProgress(0.8, '셰이더 준비 중');
     const q = state.quality === 'auto' ? 'high' : state.quality;
     renderer = await createRenderer({ device: gpu.device, context, format, canvas, data, geom, quality: q, reflEvery: Number(qs.get('refl')) || (MOBILE ? 2 : 1), msaa: Number(qs.get('msaa')) || 4, lite: qs.has('lite') ? Number(qs.get('lite')) : (MOBILE ? LITE_MOBILE : 0), log });
+    if (MOBILE) {
+      dynCtl = createDynRes({ hasTimestamps: renderer.hasTimestamps && !NO_TS });
+      // without GPU timestamps, the submit -> work-done time stands in for the GPU time
+      renderer.collectDoneTimes(!(renderer.hasTimestamps && !NO_TS));
+    }
     const tGpu = performance.now();
     log(`load: data ${(tData - t0).toFixed(0)} ms, geometry ${(tGeom - tData).toFixed(0)} ms, gpu init ${(tGpu - tGeom).toFixed(0)} ms, buildings ${buildings.stats.buildings} (${buildings.stats.estimated} est.), ${(buildings.stats.tris / 1e6).toFixed(2)} M tris`);
     window.__loadTimes = { data: tData - t0, geometry: tGeom - tData, gpu: tGpu - tGeom, total: tGpu - t0 };
@@ -358,7 +364,10 @@ $('infoBtn').addEventListener('click', () => { state.info = !state.info; syncUI(
 $('speedBtn').addEventListener('click', () => { state.speed = state.speed === 1 ? 2 : state.speed === 2 ? 4 : 1; syncUI(); });
 $('moreBtn').addEventListener('click', () => { const s = $('settings'); s.hidden = !s.hidden; $('moreBtn').setAttribute('aria-expanded', String(!s.hidden)); });
 $('reducedChk').addEventListener('change', (e) => { state.reduced = e.target.checked; });
-$('qualitySel').addEventListener('change', (e) => { state.quality = e.target.value; dyn.scale = 1; dyn.ceil = 1; });
+$('qualitySel').addEventListener('change', (e) => {
+  state.quality = e.target.value; dyn.scale = 1; dyn.ceil = 1;
+  if (dynCtl) dynCtl = createDynRes({ hasTimestamps: renderer.hasTimestamps && !NO_TS });
+});
 // hide the dialog only once the boat is back at the start, or the HUD update re-opens it mid-fade
 $('againBtn').addEventListener('click', () => { fadeCut(() => { boat.place(0); boat.finished = false; resetPassTimes(0, 0); $('ended').hidden = true; canvas.focus(); }); state.paused = false; syncUI(); });
 for (const b of document.querySelectorAll('[data-view]')) b.addEventListener('click', () => setView(b.dataset.view));
@@ -375,7 +384,24 @@ let resetExposure = true;
 let uiTimer = 0;
 const fps = { acc: 0, n: 0, t: 0, value: 0, frameMs: [] };
 const dyn = { scale: 1, timer: 0, intervals: [], calm: 0, ceil: 1, ceilAge: 0 };
+const DYNQ = qs.has('dynq');
 const NO_TS = qs.has('nots');   // test the frame-time fallback on a browser that has GPU timestamps
+// Phones: resolution levels and frame pacing (src/sim/dynres.js). The screen refresh interval is
+// estimated from the rAF callbacks (they come every refresh, rendered or not).
+let dynCtl = null;
+const pacing = { vsync: 1000 / 60, raf: new Float64Array(64), n: 0, lastRaf: 0, hitches: 0 };
+function trackRefresh(now) {
+  const d = now - pacing.lastRaf;
+  pacing.lastRaf = now;
+  if (!(d > 2 && d < 50)) return;
+  pacing.raf[pacing.n++] = d;
+  if (pacing.n < pacing.raf.length) return;
+  pacing.n = 0;
+  // lower quartile: frames the browser skipped (a busy GPU) only lengthen some intervals
+  const q = pacing.raf.slice().sort()[pacing.raf.length >> 2];
+  pacing.vsync = Math.min(34, Math.max(4, q));
+}
+const pace = () => (dynCtl && state.quality === 'auto' ? dynCtl.pace : 1);
 const probe = new Float32Array(8);
 let boatLightsW = new Float32Array(0);
 let frames = 0;
@@ -411,6 +437,7 @@ function frame(now, warmup = false, dtOverride = 0) {
   let dt = Math.min(0.1, rawMs / 1000);
   last = now;
   if (!warmup && rawMs < 100) dyn.intervals.push(rawMs);
+  if (!warmup && rawMs > 50 && rawMs < 1000) pacing.hitches++;
   if (shotMode || qs.has('fixeddt')) dt = 1 / 60;
   if (dtOverride) dt = dtOverride;
   frames++;
@@ -495,8 +522,17 @@ function underBridge(p) {
 
 function autoQuality(dt) {
   // ?dynq: let the dynamic resolution run in a fixed scene too (measuring what it settles at)
-  if (state.quality !== 'auto' || (shotMode && !qs.has('dynq'))) return;
+  if (state.quality !== 'auto' || (shotMode && !DYNQ)) { dyn.intervals.length = 0; return; }
   dyn.timer += dt;
+  if (dynCtl) {
+    if (dyn.timer < WINDOW) return;
+    dyn.timer = 0;
+    const iv = dyn.intervals;
+    dyn.intervals = [];
+    dynCtl.update({ gpuMs: renderer.stats.gpuMs, intervals: iv, doneMs: renderer.takeDoneTimes(), vsyncMs: pacing.vsync, now: performance.now() / 1000 });
+    dyn.scale = dynCtl.scale;
+    return;
+  }
   if (dyn.timer < 1.5) return;
   dyn.timer = 0;
   const iv = dyn.intervals;
@@ -564,8 +600,12 @@ function updateHUD(cam) {
   const p95 = ms[Math.floor(ms.length * 0.95)] || 0;
   const cpu = diag.cpu.slice().sort((a, b) => a - b);
   const cpuMed = cpu[cpu.length >> 1] || 0, cpuMax = cpu[cpu.length - 1] || 0;
-  const missed = diag.iv.length ? diag.iv.filter((x) => x > 25).length / diag.iv.length : 0;
-  $('perfLine').textContent = `${st.W}×${st.H} (${dyn.scale.toFixed(2)}) · ${fps.value.toFixed(0)} fps · 끊긴 프레임 ${(missed * 100).toFixed(0)}% · CPU ${cpuMed.toFixed(1)}/${cpuMax.toFixed(0)} ms`
+  // a frame is late when it comes half a refresh after its paced time (25 ms at 60 fps)
+  const late = MOBILE ? periodMs(pace(), pacing.vsync) + pacing.vsync * 0.5 : 25;
+  const missed = diag.iv.length ? diag.iv.filter((x) => x > late).length / diag.iv.length : 0;
+  $('perfLine').textContent = `${st.W}×${st.H} (${dyn.scale.toFixed(2)}) · ${fps.value.toFixed(0)} fps`
+    + (MOBILE ? ` (목표 ${Math.round(1000 / periodMs(pace(), pacing.vsync))}, 화면 ${Math.round(1000 / pacing.vsync)} Hz)` : '')
+    + ` · 끊긴 프레임 ${(missed * 100).toFixed(0)}% · 50ms 넘는 멈춤 ${pacing.hitches}회 · 해상도 변경 ${st.resizes}회 · CPU ${cpuMed.toFixed(1)}/${cpuMax.toFixed(0)} ms`
     + (renderer.hasTimestamps ? ` · GPU ${st.gpuMs.toFixed(1)} ms` : '');
   if (!$('devStats').hidden) {
     $('devStats').textContent = `${fps.value.toFixed(0)} fps  p95 ${p95.toFixed(1)} ms\nGPU ${st.gpuMs.toFixed(2)} ms\n${st.W}x${st.H} scale ${dyn.scale.toFixed(2)}\nwater ${st.waterNodes} land ${st.landNodes} meshes ${st.meshesDrawn}\ns ${boat.s.toFixed(0)} m  v ${boat.v.toFixed(2)} m/s\ncam ${cam.pos.map((v) => v.toFixed(1)).join(', ')}\nexp ${st.exposure[0].toFixed(3)} avgL ${st.exposure[1].toExponential(2)}\nsun ${env.sunElev.toFixed(1)}° az ${env.sunAzim.toFixed(0)}°`;
@@ -576,6 +616,12 @@ const MANUAL = qs.has('manual');   // frames are stepped by tools/record.mjs
 function loop(now) {
   requestAnimationFrame(loop);
   if (!renderer || !state.started || MANUAL) { last = now; return; }
+  // phones: render on every n-th screen refresh (fixed scenes render every callback, unless the
+  // dynamic resolution runs in them: ?dynq)
+  if (MOBILE && (!shotMode || DYNQ)) {
+    trackRefresh(now);
+    if (!paceDue(now, last, pace(), pacing.vsync)) return;
+  }
   frame(now);
 }
 
@@ -593,7 +639,7 @@ window.__app = {
     for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
     return btoa(s);
   },
-  stats: () => ({ ...renderer.stats, waterHeight: Array.from(renderer.stats.waterHeight), exposure: Array.from(renderer.stats.exposure), fps: fps.value, frameMs: fps.frameMs.slice(), errors: renderer.errors.slice(), dynScale: dyn.scale, boat: { s: boat.s, v: boat.v, x: boat.x, z: boat.z, heading: boat.heading }, load: window.__loadTimes, log: logLines.slice(-30) }),
+  stats: () => ({ ...renderer.stats, waterHeight: Array.from(renderer.stats.waterHeight), exposure: Array.from(renderer.stats.exposure), fps: fps.value, frameMs: fps.frameMs.slice(), errors: renderer.errors.slice(), dynScale: dyn.scale, pace: pace(), vsync: pacing.vsync, hitches: pacing.hitches, dynEstimate: dynCtl?.state.estimate, boat: { s: boat.s, v: boat.v, x: boat.x, z: boat.z, heading: boat.heading }, load: window.__loadTimes, log: logLines.slice(-30) }),
   // render one frame with a fixed dt and return it as a JPEG (base64)
   stepJpeg: async (dt, quality = 0.9) => {
     const p = renderer.capture();
