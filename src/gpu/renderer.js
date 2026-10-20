@@ -544,6 +544,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
   const exposureRead = buf(16, U.MAP_READ | U.COPY_DST, 'exposure read');
   let exposurePending = false;
   const exposureVal = new Float32Array(2);
+  const exposureU = new Float32Array(4);
   const mainPass = {
     colorAttachments: [{ view: null, resolveTarget: null, clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'discard' }],
     depthStencilAttachment: { view: null, depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'discard' },
@@ -858,7 +859,11 @@ export async function createRenderer({ device, context, format, canvas, data, ge
 
   // Draw order: the boat first (nearest, often covering much of the view), then the visible tiles
   // near to far, so early depth testing rejects hidden facade shading instead of overdrawing it.
+  // Tile indices and distances live in reused arrays, and the comparator returns small integers,
+  // so sorting every pass allocates nothing.
   const tileOrder = [];
+  const tileD2 = new Float64Array(meshes.length);
+  const byTileDist = (a, b) => (tileD2[a] < tileD2[b] ? -1 : tileD2[a] > tileD2[b] ? 1 : 0);
   function drawMeshes(rp, pl, nPlanes, shadowPass, skipBoat, maxDist, camPos, full = false) {
     let n = 0;
     if (!skipBoat && aabbVisible(pl, nPlanes, boatBounds.min, boatBounds.max)) {
@@ -869,21 +874,22 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       n++;
     }
     tileOrder.length = 0;
-    for (const m of meshes) {
+    for (let k = 0; k < meshes.length; k++) {
+      const m = meshes[k];
       if (!aabbVisible(pl, nPlanes, m.min, m.max)) continue;
       if (camPos) {
         const dx = Math.max(m.min[0] - camPos[0], 0, camPos[0] - m.max[0]);
         const dz = Math.max(m.min[2] - camPos[2], 0, camPos[2] - m.max[2]);
-        m.d2 = dx * dx + dz * dz;
-        if (maxDist && m.kind === 'building' && m.d2 > maxDist * maxDist) continue;
+        const d2 = tileD2[k] = dx * dx + dz * dz;
+        if (maxDist && m.kind === 'building' && d2 > maxDist * maxDist) continue;
       }
-      tileOrder.push(m);
+      tileOrder.push(k);
     }
-    if (camPos && !shadowPass) tileOrder.sort((a, b) => a.d2 - b.d2);
+    if (camPos && !shadowPass) tileOrder.sort(byTileDist);
     rp.setBindGroup(1, bgMesh, [0]);
     rp.setVertexBuffer(0, staticVB);
     rp.setIndexBuffer(staticIB, 'uint32');
-    for (const m of tileOrder) { rp.drawIndexed(m.count, 1, m.first, m.base); n++; }
+    for (let j = 0; j < tileOrder.length; j++) { const m = meshes[tileOrder[j]]; rp.drawIndexed(m.count, 1, m.first, m.base); n++; }
     return n;
   }
   function drawVehicles(rp, pipe) {
@@ -927,7 +933,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     objF[16] = 0.0006;
     device.queue.writeBuffer(objUBO, 256, objF);
     const bx = boatMatrix[12], by = boatMatrix[13], bz = boatMatrix[14];
-    boatBounds.min = [bx - 30, by - 3, bz - 30]; boatBounds.max = [bx + 30, by + 15, bz + 30];
+    const bmin = boatBounds.min, bmax = boatBounds.max;
+    bmin[0] = bx - 30; bmin[1] = by - 3; bmin[2] = bz - 30; bmax[0] = bx + 30; bmax[1] = by + 15; bmax[2] = bz + 30;
 
     if (state.passTimes) device.queue.writeBuffer(passTimeBuf, 0, state.passTimes);
 
@@ -1102,7 +1109,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
       const p = enc.beginRenderPass(i === upPasses.length - 1 ? ppMark(upPasses[i], 'bloom', false, true) : upPasses[i]);
       p.setPipeline(upPipe); p.setBindGroup(0, upBGs[i]); p.draw(3); p.end();
     }
-    device.queue.writeBuffer(exposureUBO, 0, new Float32Array([state.resetExposure ? 0 : dt, env.exposureKey, env.exposureMin, env.exposureMax]));
+    exposureU[0] = state.resetExposure ? 0 : dt; exposureU[1] = env.exposureKey; exposureU[2] = env.exposureMin; exposureU[3] = env.exposureMax;
+    device.queue.writeBuffer(exposureUBO, 0, exposureU);
     {
       const ep = enc.beginComputePass();
       ep.setPipeline(exposurePipe); ep.setBindGroup(0, bgExposure); ep.dispatchWorkgroups(1);

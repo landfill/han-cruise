@@ -8,7 +8,7 @@ import { buildTreeTemplate } from './scene/trees.js';
 import { buildPiers } from './scene/piers.js';
 import { buildCarTemplate, buildBusTemplate, CAR_COLOURS, BUS_COLOURS } from './scene/vehicles.js';
 import { createRenderer, QUALITY } from './gpu/renderer.js';
-import { boatMatrix, transformPoint, D2R, clamp } from './gpu/math.js';
+import { boatMatrix, D2R, clamp } from './gpu/math.js';
 import { Path, Boat } from './sim/route.js';
 import { ROUTE_POINTS, LANDMARKS } from './sim/routeData.js';
 import { makeEnv, PRESETS } from './sim/environment.js';
@@ -449,9 +449,12 @@ function frame(now, warmup = false, dtOverride = 0) {
   // boat lights to world
   const bl = geom.boat.lights;
   if (boatLightsW.length !== bl.length) boatLightsW = new Float32Array(bl.length);
+  const m = boatM;
   for (let i = 0; i < bl.length; i += 8) {
-    const p = transformPoint(boatM, [bl[i], bl[i + 1], bl[i + 2]]);
-    boatLightsW[i] = p[0]; boatLightsW[i + 1] = p[1]; boatLightsW[i + 2] = p[2];
+    const x = bl[i], y = bl[i + 1], z = bl[i + 2];
+    boatLightsW[i] = m[0] * x + m[4] * y + m[8] * z + m[12];
+    boatLightsW[i + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+    boatLightsW[i + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
     for (let k = 3; k < 8; k++) boatLightsW[i + k] = bl[i + k];
   }
   const dynCount = traffic.update(dt, boatLightsW, env.lights > 0.001);
