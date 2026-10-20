@@ -74,9 +74,12 @@ while (Date.now() - t0 < seconds * 1000) {
 }
 
 const rec = await page.evaluate(() => { const r = window.__rec; r.stop = true; return { iv: r.iv.slice(3), sizes: r.sizes, longTasks: r.longTasks, calls: window.__gpuCalls.n - r.calls0, frames: window.__app.frames() - r.frames0, stats: (({ W, H, dynScale }) => ({ W, H, dynScale }))(window.__app.stats()) }; });
-await cdp.send('Tracing.end');
-await traceDone;
-await browser.close();
+// the trace can fail to finish now and then (seen after touch input under heavy throttling):
+// give up after 60 s and report without the trace-based numbers
+await cdp.send('Tracing.end').catch(() => {});
+const traceOk = await Promise.race([traceDone.then(() => true), new Promise((r) => setTimeout(() => r(false), 60000))]);
+if (!traceOk) console.error('trace did not finish: GC and thread times are missing from this run');
+await Promise.race([browser.close(), new Promise((r) => setTimeout(r, 10000))]);
 
 // ---- trace: main-thread time by activity, GC pauses ----
 const main = new Set();
@@ -127,7 +130,7 @@ const sorted = iv.slice().sort((a, b) => a - b);
 const pct = (p) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] || 0;
 const dur = iv.reduce((a, b) => a + b, 0) / 1000;
 const out = {
-  label, cpu, tod, seconds, drag, noblur, params, frames: iv.length,
+  label, cpu, tod, seconds, drag, noblur, params, traceOk, frames: iv.length,
   fps: +(iv.length / dur).toFixed(1),
   p50: +pct(0.5).toFixed(1), p95: +pct(0.95).toFixed(1), p99: +pct(0.99).toFixed(1), max: +sorted.at(-1).toFixed(1),
   over25pct: +(100 * iv.filter((x) => x > 25).length / iv.length).toFixed(2),

@@ -18,7 +18,7 @@ import { CruiseAudio } from './audio/audio.js';
 import { routeSections } from './sim/sections.js';
 import { SCENES } from './sim/scenes.js';
 import { createMinimap } from './ui/minimap.js';
-import { createDynRes, paceDue, periodMs, WINDOW } from './sim/dynres.js';
+import { createDynRes, createRefreshEstimator, paceDue, periodMs, WINDOW } from './sim/dynres.js';
 
 const qs = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -387,19 +387,15 @@ const dyn = { scale: 1, timer: 0, intervals: [], calm: 0, ceil: 1, ceilAge: 0 };
 const DYNQ = qs.has('dynq');
 const NO_TS = qs.has('nots');   // test the frame-time fallback on a browser that has GPU timestamps
 // Phones: resolution levels and frame pacing (src/sim/dynres.js). The screen refresh interval is
-// estimated from the rAF callbacks (they come every refresh, rendered or not).
+// estimated from the rAF callbacks (they come every refresh, rendered or not), from the start of
+// loading, while the GPU is still idle; a longer interval later is only believed when the GPU
+// cannot be the reason the browser skips callbacks (createRefreshEstimator).
 let dynCtl = null;
-const pacing = { vsync: 1000 / 60, raf: new Float64Array(64), n: 0, lastRaf: 0, hitches: 0 };
+const refresh = createRefreshEstimator();
+const pacing = { get vsync() { return refresh.ms; }, lastRaf: 0, hitches: 0 };
 function trackRefresh(now) {
-  const d = now - pacing.lastRaf;
+  refresh.add(now - pacing.lastRaf, now / 1000, dynCtl ? dynCtl.state.lastGpu : 0);
   pacing.lastRaf = now;
-  if (!(d > 2 && d < 50)) return;
-  pacing.raf[pacing.n++] = d;
-  if (pacing.n < pacing.raf.length) return;
-  pacing.n = 0;
-  // lower quartile: frames the browser skipped (a busy GPU) only lengthen some intervals
-  const q = pacing.raf.slice().sort()[pacing.raf.length >> 2];
-  pacing.vsync = Math.min(34, Math.max(4, q));
 }
 const pace = () => (dynCtl && state.quality === 'auto' ? dynCtl.pace : 1);
 const probe = new Float32Array(8);
@@ -615,13 +611,11 @@ function updateHUD(cam) {
 const MANUAL = qs.has('manual');   // frames are stepped by tools/record.mjs
 function loop(now) {
   requestAnimationFrame(loop);
+  if (MOBILE) trackRefresh(now);
   if (!renderer || !state.started || MANUAL) { last = now; return; }
   // phones: render on every n-th screen refresh (fixed scenes render every callback, unless the
   // dynamic resolution runs in them: ?dynq)
-  if (MOBILE && (!shotMode || DYNQ)) {
-    trackRefresh(now);
-    if (!paceDue(now, last, pace(), pacing.vsync)) return;
-  }
+  if (MOBILE && (!shotMode || DYNQ) && !paceDue(now, last, pace(), pacing.vsync)) return;
   frame(now);
 }
 

@@ -57,6 +57,7 @@ export function createDynRes({ hasTimestamps }) {
     failedAt: LEVELS.map(() => -1e9),   // when each level last failed (at the current pace)
     calm: 0, slowCount: 0, normalFailedAt: -1e9,
     estimate: hasTimestamps ? 'timestamps' : 'done',
+    lastGpu: 0,                        // the GPU time (or its stand-in) of the last decision
   };
 
   function setLevel(j, now) {
@@ -75,6 +76,7 @@ export function createDynRes({ hasTimestamps }) {
 
   function updateGpu(g, now, v) {
     if (!g) return;
+    st.lastGpu = g;
     const B = periodMs(st.pace, v) * BUDGET;
     if (g > B * 1.1) {
       st.failedAt[st.level] = now;
@@ -152,6 +154,7 @@ export function createDynRes({ hasTimestamps }) {
       if (doneMs && doneMs.length >= 10) {
         st.estimate = 'done';
         const g = median(doneMs);
+        st.lastGpu = g;
         // frames that came a refresh late also count as over budget
         const over = intervals.length >= 10 && lateShare(intervals, v) > LATE_DOWN;
         updateGpu(over ? Math.max(g, periodMs(st.pace, v) * BUDGET * 1.11) : g, now, v);
@@ -168,4 +171,35 @@ export function createDynRes({ hasTimestamps }) {
 export function paceDue(now, lastRender, pace, vsyncMs) {
   const v = vsyncMs || 1000 / 60;
   return now - lastRender >= periodMs(pace, v) - v * 0.5;
+}
+
+// Screen refresh interval from the intervals between rAF callbacks (they come every refresh,
+// rendered or not). A shorter interval is adopted at once. A longer one is ambiguous: the screen
+// may have slowed down (power saving), or the browser is skipping callbacks because the GPU is
+// behind, and then every interval is two refreshes long. Taking that for a 30 Hz screen would
+// double the frame budget and keep the overloaded level, so a longer interval is adopted only
+// after LONGER_FOR seconds, and only while the GPU time is clearly below the current interval
+// (a GPU that keeps up cannot be the reason callbacks are skipped). An interval that stays too
+// short is harmless: the pace still rounds up to ~16 ms or more. `guarded: false` takes every
+// window's value as is (the first version; kept for tools/dynres-sim.mjs).
+const LONGER_FOR = 30;
+export function createRefreshEstimator({ initial = 1000 / 60, window = 64, guarded = true } = {}) {
+  const buf = new Float64Array(window);
+  let n = 0, est = initial, longerSince = -1;
+  return {
+    get ms() { return est; },
+    // d: ms since the previous rAF callback; now: seconds; gpuMs: current GPU time estimate (0 = none)
+    add(d, now, gpuMs) {
+      if (!(d > 2 && d < 50)) return;
+      buf[n++] = d;
+      if (n < buf.length) return;
+      n = 0;
+      // lower quartile: occasional skipped callbacks only lengthen some intervals
+      const q = Math.min(34, Math.max(4, buf.slice().sort()[buf.length >> 2]));
+      if (!guarded) { est = q; return; }
+      if (q <= est * 1.25) { est = Math.min(est, q); longerSince = -1; return; }
+      if (longerSince < 0) longerSince = now;
+      if (now - longerSince >= LONGER_FOR && gpuMs > 0 && gpuMs < est * 0.8) { est = q; longerSince = -1; }
+    },
+  };
 }

@@ -15,11 +15,14 @@
 //   same refresh replaces it).
 // - A render-size change adds RESIZE_MS of GPU time to that frame (allocation and clearing of
 //   the render targets; an assumption, the real cost was not measured on a phone).
-// - GPU-timestamp path: smoothed GPU time sampled every 7th frame (as in the renderer); frame-time
-//   path: rAF intervals.
+// - GPU-timestamp path: smoothed GPU time sampled every 7th frame (as in the renderer); without
+//   timestamps: submit -> work-done times and the intervals between rendered frames.
+// - The new controller sees the screen refresh interval through the app's estimator, fed with the
+//   intervals between rAF callbacks, including the callbacks skipped while the GPU is behind (and
+//   2 s of idle refreshes first, as while the app is loading).
 // Usage: node tools/dynres-sim.mjs [--seconds 180] [--seeds 3] [--resize 25] [--out file]
 import fs from 'node:fs';
-import { createDynRes, paceDue, WINDOW } from '../src/sim/dynres.js';
+import { createDynRes, createRefreshEstimator, paceDue, WINDOW } from '../src/sim/dynres.js';
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i + 1] : d; };
@@ -27,6 +30,9 @@ const SECONDS = Number(opt('seconds', 180));
 const SEEDS = Number(opt('seeds', 3));
 const RESIZE_MS = Number(opt('resize', 25));
 const OUTF = opt('out', '');
+// refresh interval the new controller works with: 'guarded' (src/sim/dynres.js, as in the app),
+// 'plain' (lower quartile of each window, the first version) or 'exact' (the true interval)
+const ESTIMATOR = opt('estimator', 'guarded');
 const FIXED = 3;   // ms that do not scale with the pixel count (FFT, sky LUTs, cloud dome, env cube)
 
 // voyage: [duration s, 1.4 MP GPU ms on the Adreno X1-85]
@@ -79,9 +85,14 @@ function legacyController(hasTS) {
 // ---- the new controller, driven the way src/main.js drives it ----
 function newController(hasTS, V) {
   const c = createDynRes({ hasTimestamps: hasTS });
+  const est = ESTIMATOR === 'exact' ? null : createRefreshEstimator({ guarded: ESTIMATOR === 'guarded' });
   let timer = 0, iv = [], t = 0, done = [];
+  const vsync = () => (est ? est.ms : V);
+  // the app feeds the estimator while loading too, when the GPU is idle: 2 s of plain refreshes
+  if (est) for (let i = 0, t = -2; t < 0; i++, t += V / 1000) est.add(V, t, 0);
   return {
-    get scale() { return c.scale; }, get pace() { return c.pace; }, paced: true,
+    get scale() { return c.scale; }, get pace() { return c.pace; }, paced: true, vsync,
+    raf(d, nowSec) { if (est) est.add(d, nowSec, c.state.lastGpu); },
     done(ms) { if (!hasTS) done.push(ms); },
     frame(dt, rawMs, gpuMs) {
       t += dt;
@@ -89,7 +100,7 @@ function newController(hasTS, V) {
       timer += dt;
       if (timer < WINDOW) return;
       timer = 0;
-      c.update({ gpuMs, intervals: iv, doneMs: done, vsyncMs: V, now: t });
+      c.update({ gpuMs, intervals: iv, doneMs: done, vsyncMs: vsync(), now: t });
       iv = []; done = [];
     },
   };
@@ -113,10 +124,12 @@ function run({ ctrl, hz, F, hasTS, seed }) {
     if (newest > shownIdx) { shownIdx = newest; shownAt = now; shows.push(now); }
     if (inflight.length >= 2) continue;           // rAF throttled: GPU is two frames behind
     // rAF callback
-    if (ctrl.paced && !paceDue(now, lastRender, ctrl.pace, V)) continue;
+    if (ctrl.raf) ctrl.raf(now - lastRaf, now / 1000);
+    lastRaf = now;
+    if (ctrl.paced && !paceDue(now, lastRender, ctrl.pace, ctrl.vsync())) continue;
     const rawMs = now - lastRender;
     const dt = Math.min(0.1, rawMs / 1000);
-    lastRender = now; lastRaf = now;
+    lastRender = now;
     const s = ctrl.scale;
     const key = ctrl.paced ? s : Math.round(s * 1578);   // legacy: any scale change changes the render size
     let extra = 0;
@@ -169,7 +182,7 @@ for (const hasTS of [true, false]) for (const hz of [60, 90, 120, 144]) for (con
 }
 
 const f1 = (x) => x.toFixed(1), f0 = (x) => x.toFixed(0);
-console.log(`model: ${SECONDS} s voyage, ${SEEDS} seeds, resize cost ${RESIZE_MS} ms GPU (assumed)`);
+console.log(`model: ${SECONDS} s voyage, ${SEEDS} seeds, resize cost ${RESIZE_MS} ms GPU (assumed), refresh estimator ${ESTIMATOR}`);
 console.log('| GPU 시간 측정 | 화면 | 기기 배율 F | 크기 변경/분 이전→이후 | 표시 fps | 불규칙 간격 % | 50 ms 초과 히치 | 화소 비율 | 30 fps 시간 % |');
 console.log('|---|---|---|---|---|---|---|---|---|');
 for (const r of rows) {
