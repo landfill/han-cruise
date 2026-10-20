@@ -560,6 +560,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     if (w === W && h === H) return;
     W = w; H = h;
     reflStale = true;
+    targetGen++;
     for (const t of [colorMS, depthMS, hdrTex, bloomTex, reflTex, reflDepth, skyTex]) t && t.destroy();
     skyTex = device.createTexture({ size: [Math.max(1, W >> 1), Math.max(1, H >> 1)], format: HDR, usage: T.RENDER_ATTACHMENT | T.TEXTURE_BINDING });
     skyPass.colorAttachments[0].view = skyTex.createView();
@@ -609,7 +610,8 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     layout: waterBGL, entries: [fullArr(dispTex), fullArr(derivTex), fullArr(momTex), foamTex.createView(), pathTex.createView(), reflTex.createView(), sdfTex.createView(), sampWater, { buffer: passTimeBuf }]
       .map((r, i) => ({ binding: i, resource: r })),
   });
-  let bgWater = null, bgWaterW = -1;
+  // the water bind group samples the reflection texture, which every resize replaces
+  let bgWater = null, bgWaterGen = -1, targetGen = 0;
 
   // ------------------------------------------------------------------------------------------
   // GPU timing
@@ -925,7 +927,7 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     const { cam, env, time, dt, boatMatrix, dynLights } = state;
     const skip = env.skip || {};
     resize(state.width, state.height);
-    if (bgWaterW !== W || !bgWater) { bgWater = makeWaterBG(); bgWaterW = W; }
+    if (bgWaterGen !== targetGen || !bgWater) { bgWater = makeWaterBG(); bgWaterGen = targetGen; }
     frameIndex++;
 
     // boat object transform + bounds (for culling)
