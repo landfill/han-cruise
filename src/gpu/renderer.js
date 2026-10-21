@@ -565,7 +565,10 @@ export async function createRenderer({ device, context, format, canvas, data, ge
     for (const t of [colorMS, depthMS, hdrTex, bloomTex, reflTex, reflDepth, skyTex]) t && t.destroy();
     skyTex = device.createTexture({ size: [Math.max(1, W >> 1), Math.max(1, H >> 1)], format: HDR, usage: T.RENDER_ATTACHMENT | T.TEXTURE_BINDING });
     skyPass.colorAttachments[0].view = skyTex.createView();
-    bgSkyComp = bgAuto(P.skyComp, [skyTex.createView(), linSamp]);
+    // explicit bindings: the composite does not use skyLUT (binding 2), so the auto layout drops it
+    bgSkyComp = device.createBindGroup({ label: 'sky composite', layout: P.skyComp.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: frameUBO } }, { binding: 1, resource: transView }, { binding: 3, resource: sampClamp },
+      { binding: 4, resource: skyTex.createView() }, { binding: 5, resource: linSamp }] });
     colorMS = MSAA > 1 ? device.createTexture({ size: [W, H], format: HDR, sampleCount: MSAA, usage: T.RENDER_ATTACHMENT }) : null;
     depthMS = device.createTexture({ size: [W, H], format: 'depth32float', sampleCount: MSAA, usage: T.RENDER_ATTACHMENT });
     hdrTex = device.createTexture({ size: [W, H], format: HDR, usage: T.RENDER_ATTACHMENT | T.TEXTURE_BINDING | T.COPY_SRC });

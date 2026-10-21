@@ -298,6 +298,42 @@ fn cloudShadow(world: vec3f) -> f32 {
 `;
 
 // Clouds + full sky radiance (needs the same bindings as SKY_RENDER_FUNCS).
+// Sun and moon discs. Drawn at full resolution in the sky composite (src/wgsl/extras.js): in the
+// half-resolution sky a disc ~13 px wide became 2 px blocks, and its HDR radiance saturated every
+// texel the bilinear upscale touched, so it read as a square. The reflection pass and the env cube
+// still draw them with the sky. Angular distance as the chord |dir - centre| (the same as
+// sqrt(2(1 - cos)) for unit vectors, without the f32 cancellation near the centre).
+// Requires: F, SUN_ANG_R, PI, gnoise, sampleTrans, camR.
+export const SKY_DISC_FUNCS = /* wgsl */ `
+fn sunDisk(dir: vec3f) -> vec3f {
+  let ang = length(dir - F.sunDir.xyz);
+  let pix = F.screen.w * 2.0 * length(F.camUp.xyz) * 0.75;
+  let edge = 1.0 - smoothstep(SUN_ANG_R - pix, SUN_ANG_R + pix, ang);
+  if (edge <= 0.0) { return vec3f(0.0); }
+  let x = min(ang / SUN_ANG_R, 1.0);
+  let mu = sqrt(max(1.0 - x * x, 0.0));
+  let limb = vec3f(1.0) - vec3f(0.397, 0.503, 0.652) * (1.0 - mu);
+  let rad = F.sunDir.w / (PI * SUN_ANG_R * SUN_ANG_R);
+  return rad * limb * edge * sampleTrans(camR(), max(dir.y, -0.01));
+}
+
+const MOON_ANG_R: f32 = 0.0045;
+fn moonDisk(dir: vec3f) -> vec3f {
+  if (F.moonDir.w <= 0.0 || F.moonDir.y < -0.02) { return vec3f(0.0); }
+  let c = dot(dir, F.moonDir.xyz);
+  let ang = length(dir - F.moonDir.xyz);
+  let pix = F.screen.w * 2.0 * length(F.camUp.xyz) * 0.75;
+  let edge = 1.0 - smoothstep(MOON_ANG_R - pix, MOON_ANG_R + pix, ang);
+  if (edge <= 0.0) { return vec3f(0.0); }
+  // faint maria texture
+  let q = (dir - F.moonDir.xyz * c) / MOON_ANG_R;
+  let maria = 0.82 + 0.18 * gnoise(q.xy * 2.3 + q.z * 1.7);
+  // disc radiance = illuminance / solid angle (albedo already folded into the illuminance)
+  let rad = F.moonDir.w / (PI * MOON_ANG_R * MOON_ANG_R);
+  return vec3f(1.0, 0.97, 0.92) * rad * edge * maria * sampleTrans(camR(), max(dir.y, 0.0));
+}
+`;
+
 export const SKY_CLOUD_FUNCS = /* wgsl */ `
 
 // ---- clouds -------------------------------------------------------------
@@ -508,35 +544,7 @@ fn cloudLayers(dir: vec3f, pixAng: f32, aa: vec2f, lo: vec4f, sunT: ptr<function
   return vec4f(col, hidden);
 }
 
-fn sunDisk(dir: vec3f) -> vec3f {
-  let c = dot(dir, F.sunDir.xyz);
-  let ang = sqrt(max(2.0 * (1.0 - c), 0.0));
-  let pix = F.screen.w * 2.0 * length(F.camUp.xyz) * 0.75;
-  let edge = 1.0 - smoothstep(SUN_ANG_R - pix, SUN_ANG_R + pix, ang);
-  if (edge <= 0.0) { return vec3f(0.0); }
-  let x = min(ang / SUN_ANG_R, 1.0);
-  let mu = sqrt(max(1.0 - x * x, 0.0));
-  let limb = vec3f(1.0) - vec3f(0.397, 0.503, 0.652) * (1.0 - mu);
-  let rad = F.sunDir.w / (PI * SUN_ANG_R * SUN_ANG_R);
-  return rad * limb * edge * sampleTrans(camR(), max(dir.y, -0.01));
-}
-
-const MOON_ANG_R: f32 = 0.0045;
-fn moonDisk(dir: vec3f) -> vec3f {
-  if (F.moonDir.w <= 0.0 || F.moonDir.y < -0.02) { return vec3f(0.0); }
-  let c = dot(dir, F.moonDir.xyz);
-  let ang = sqrt(max(2.0 * (1.0 - c), 0.0));
-  let pix = F.screen.w * 2.0 * length(F.camUp.xyz) * 0.75;
-  let edge = 1.0 - smoothstep(MOON_ANG_R - pix, MOON_ANG_R + pix, ang);
-  if (edge <= 0.0) { return vec3f(0.0); }
-  // faint maria texture
-  let q = (dir - F.moonDir.xyz * c) / MOON_ANG_R;
-  let maria = 0.82 + 0.18 * gnoise(q.xy * 2.3 + q.z * 1.7);
-  // disc radiance = illuminance / solid angle (albedo already folded into the illuminance)
-  let rad = F.moonDir.w / (PI * MOON_ANG_R * MOON_ANG_R);
-  return vec3f(1.0, 0.97, 0.92) * rad * edge * maria * sampleTrans(camR(), max(dir.y, 0.0));
-}
-
+${SKY_DISC_FUNCS}
 fn skyRadiance(dirIn: vec3f, withSun: bool, pixAng: f32, lo: vec4f) -> vec3f {
   var dir = dirIn;
   dir.y = max(dir.y, 0.0005);

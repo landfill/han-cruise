@@ -1,6 +1,7 @@
 // Sky background, trees, light sprites (lamps, traffic, obstruction lights) and auto exposure.
 import { LIGHTING_WGSL } from './lighting.js';
-import { SKY_CLOUD_FUNCS, CLOUD_DOME_SAMPLE } from './sky.js';
+import { SKY_CLOUD_FUNCS, CLOUD_DOME_SAMPLE, SKY_RENDER_FUNCS, SKY_DISC_FUNCS } from './sky.js';
+import { FRAME_WGSL, ATMO_CORE_WGSL } from './common.js';
 
 // Full-resolution sky + clouds (adapted from web-ocean's sky pass, MIT).
 export const SKY_BG = LIGHTING_WGSL + SKY_CLOUD_FUNCS + CLOUD_DOME_SAMPLE + /* wgsl */ `
@@ -23,17 +24,26 @@ struct VO { @builtin(position) pos: vec4f, @location(0) ndc: vec2f };
   let aa = vec2f(0.0, fwidth(eh));
   var sunT = 1.0;
   let cl = cloudLayers(d2, pixAng, aa, cloudDomeAt(d2, sampR), &sunT);
-  var L = skyAtmo(d2) * (1.0 - cl.a) + cl.rgb + sunDisk(dir) * sunT + moonDisk(dir) * sunT;
+  var L = skyAtmo(d2) * (1.0 - cl.a) + cl.rgb;
+  // the half-resolution main sky leaves the sun and moon to SKY_COMPOSITE (full resolution) and
+  // passes the cloud transmittance towards them in alpha; the reflection pass draws them here
+  if (isReflPass()) { L += (sunDisk(dir) + moonDisk(dir)) * sunT; }
   // below the horizon (only visible past the edge of the terrain): hazy ground
   if (dir.y < 0.0) { L = mix(L, skyAtmo(normalize(vec3f(dir.x, 0.002, dir.z))) * 0.7, smoothstep(0.0, -0.05, dir.y)); }
-  return vec4f(L, select(1.0, 20000.0, isReflPass()));
+  return vec4f(L, select(sunT, 20000.0, isReflPass()));
 }
 `;
 
-// Composites the half-resolution sky into the main pass (only where nothing else was drawn).
-export const SKY_COMPOSITE = /* wgsl */ `
-@group(0) @binding(0) var skyTex: texture_2d<f32>;
-@group(0) @binding(1) var samp: sampler;
+// Composites the half-resolution sky into the main pass (only where nothing else was drawn) and
+// adds the sun and moon discs at full resolution, dimmed by the cloud transmittance in the sky's alpha.
+export const SKY_COMPOSITE = FRAME_WGSL + ATMO_CORE_WGSL + /* wgsl */ `
+@group(0) @binding(0) var<uniform> F: Frame;
+@group(0) @binding(1) var transLUT: texture_2d<f32>;
+@group(0) @binding(2) var skyLUT: texture_2d<f32>;
+@group(0) @binding(3) var sampC: sampler;
+@group(0) @binding(4) var skyTex: texture_2d<f32>;
+@group(0) @binding(5) var samp: sampler;
+` + SKY_RENDER_FUNCS + SKY_DISC_FUNCS + /* wgsl */ `
 struct VO { @builtin(position) pos: vec4f };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VO {
   let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
@@ -43,7 +53,12 @@ struct VO { @builtin(position) pos: vec4f };
 }
 @fragment fn fs(in: VO) -> @location(0) vec4f {
   let dims = vec2f(textureDimensions(skyTex)) * 2.0;
-  return vec4f(textureSampleLevel(skyTex, samp, in.pos.xy / dims, 0.0).rgb, 1.0);
+  let sky = textureSampleLevel(skyTex, samp, in.pos.xy / dims, 0.0);
+  let ndc = vec2f(in.pos.x * F.screen.z * 2.0 - 1.0, 1.0 - in.pos.y * F.screen.w * 2.0);
+  let dir = normalize(F.camFwd.xyz + ndc.x * F.camRight.xyz + ndc.y * F.camUp.xyz);
+  // same fade below the horizon as the sky pass
+  let discs = (sunDisk(dir) + moonDisk(dir)) * sky.a * (1.0 - smoothstep(0.0, -0.05, dir.y));
+  return vec4f(sky.rgb + discs, 1.0);
 }
 `;
 
